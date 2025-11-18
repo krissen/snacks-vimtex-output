@@ -1,12 +1,11 @@
--- lua/plugin_configs/vimtex_output.lua
--- Render VimTeX compiler output in an unfocusable floating window
--- and surface build status through Snacks notifications.
+-- snacks-vimtex-output
+-- Render VimTeX compiler output in a floating overlay and surface build status through notifications.
 
 local M = {}
 
 local uv = vim.uv or vim.loop
 
-local config = {
+local default_config = {
   -- Dimensions for the unfocused mini overlay
   mini = {
     width_scale = 0.55,
@@ -37,10 +36,26 @@ local config = {
   scrolloff_margin = 2,
   -- Retry logic for auto-opening when the log file is recreated lazily
   auto_open = {
+    enabled = true,
     retries = 6,
     delay = 150,
   },
+  -- Automatically hide the floating window after a successful build
+  auto_hide = {
+    enabled = true,
+    delay = 3000,
+  },
+  -- Notification configuration and override hook
+  notifications = {
+    enabled = true,
+    title = "VimTeX",
+  },
+  notifier = nil,
+  border_highlight = "FloatBorder",
 }
+
+local config = vim.deepcopy(default_config)
+M.config = config
 
 local state = {
   win = nil,
@@ -54,14 +69,20 @@ local state = {
   status = "idle",
   focused = false,
   prev_win = nil,
-  border_hl = "FloatBorder",
+  border_hl = config.border_highlight,
   scrolloff_restore = nil,
   render_retry_token = 0,
   last_close_reason = nil,
+  augroup = nil,
+  notify = nil,
 }
 
 local function notifier()
   if state.notify then
+    return state.notify
+  end
+  if config.notifier then
+    state.notify = config.notifier
     return state.notify
   end
   local notify = {
@@ -89,6 +110,21 @@ local function notifier()
   end
   state.notify = notify
   return notify
+end
+
+local function notify(level, msg, opts)
+  local notifications = config.notifications or {}
+  if notifications.enabled == false then
+    return
+  end
+  opts = opts or {}
+  if not opts.title then
+    opts.title = notifications.title or "VimTeX"
+  end
+  local handler = notifier()[level]
+  if handler then
+    handler(msg, opts)
+  end
 end
 
 local function clamp(value, min_value, max_value)
@@ -196,13 +232,17 @@ local function stop_polling()
 end
 
 local function schedule_hide(delay)
+  if not config.auto_hide or config.auto_hide.enabled == false then
+    return
+  end
   state.hide_token = state.hide_token + 1
   local token = state.hide_token
+  local hide_delay = delay or config.auto_hide.delay or 2000
   vim.defer_fn(function()
     if state.hide_token == token and not state.focused then
       close_window({ reason = "auto_success" })
     end
-  end, delay or 2000)
+  end, hide_delay)
 end
 
 local function normalized_path(path)
@@ -299,7 +339,8 @@ local function update_buffer_from_file(force)
   if not stat then
     return false
   end
-  local changed = force or not state.last_stat
+  local changed = force
+    or not state.last_stat
     or stat.mtime.sec ~= state.last_stat.mtime.sec
     or stat.mtime.nsec ~= state.last_stat.mtime.nsec
     or stat.size ~= state.last_stat.size
@@ -355,7 +396,7 @@ local function ensure_output_ready(opts)
   local target = resolve_target(opts.target, opts.source_buf)
   if not target then
     if not opts.quiet then
-      notifier().warn("VimTeX saknar känt output-spår", { title = "VimTeX" })
+      notify("warn", "VimTeX saknar känt output-spår")
     end
     return nil
   end
@@ -461,7 +502,7 @@ local function render_window(opts)
     title = opts.title or status_title(),
   }
 
-  local border_hl = opts.border_hl or state.border_hl or "FloatBorder"
+  local border_hl = opts.border_hl or state.border_hl or config.border_highlight or "FloatBorder"
   state.border_hl = border_hl
 
   local win_exists = state.win and vim.api.nvim_win_is_valid(state.win)
@@ -580,7 +621,7 @@ local function on_compile_started(event)
   state.started_at = current_time()
   state.elapsed = nil
   state.status = "running"
-  state.border_hl = "FloatBorder"
+  state.border_hl = config.border_highlight or "FloatBorder"
   state.hide_token = state.hide_token + 1
   render_with_retry({
     target = ctx.target,
@@ -588,10 +629,14 @@ local function on_compile_started(event)
     poll = true,
     focus = state.focused,
     quiet = true,
-    retry_count = (config.auto_open and config.auto_open.retries) or 0,
+    retry_count = (
+      config.auto_open
+      and config.auto_open.enabled ~= false
+      and config.auto_open.retries
+    ) or 0,
     retry_delay = (config.auto_open and config.auto_open.delay) or 120,
   })
-  notifier().info("Bygger LaTeX…", { title = "VimTeX" })
+  notify("info", "Bygger LaTeX…")
 end
 
 local function on_compile_succeeded(event)
@@ -607,8 +652,8 @@ local function on_compile_succeeded(event)
     source_buf = ctx.source_buf,
     focus = state.focused,
   })
-  notifier().info("LaTeX-bygget klart" .. format_duration(), { title = "VimTeX" })
-  schedule_hide(3000)
+  notify("info", "LaTeX-bygget klart" .. format_duration())
+  schedule_hide(config.auto_hide and config.auto_hide.delay)
 end
 
 local function on_compile_failed(event)
@@ -625,8 +670,7 @@ local function on_compile_failed(event)
     source_buf = ctx.source_buf,
     focus = state.focused,
   })
-  notifier().error("LaTeX-bygget misslyckades" .. format_duration(), {
-    title = "VimTeX",
+  notify("error", "LaTeX-bygget misslyckades" .. format_duration(), {
     timeout = false,
     keep = true,
   })
@@ -645,8 +689,12 @@ local function on_compile_stopped()
   end
 end
 
-function M.setup()
-  local group = vim.api.nvim_create_augroup("vimtex_output_float", { clear = true })
+local function setup_autocmds()
+  if state.augroup then
+    pcall(vim.api.nvim_del_augroup_by_id, state.augroup)
+  end
+  local group = vim.api.nvim_create_augroup("snacks_vimtex_output", { clear = true })
+  state.augroup = group
   vim.api.nvim_create_autocmd("User", {
     group = group,
     pattern = "VimtexEventCompileStarted",
@@ -667,16 +715,33 @@ function M.setup()
     pattern = "VimtexEventCompileStopped",
     callback = on_compile_stopped,
   })
+end
 
-  vim.api.nvim_create_user_command("VimtexOutputShow", function()
-    M.toggle_focus()
-  end, {})
-  vim.api.nvim_create_user_command("VimtexOutputHide", function()
-    M.hide()
-  end, {})
-  vim.api.nvim_create_user_command("VimtexOutputToggle", function()
-    M.toggle()
-  end, {})
+local function setup_commands()
+  local commands = {
+    VimtexOutputShow = M.show,
+    VimtexOutputHide = M.hide,
+    VimtexOutputToggle = M.toggle,
+    VimtexOutputToggleFocus = M.toggle_focus,
+  }
+  for name in pairs(commands) do
+    pcall(vim.api.nvim_del_user_command, name)
+  end
+  for name, fn in pairs(commands) do
+    vim.api.nvim_create_user_command(name, function()
+      fn()
+    end, {})
+  end
+end
+
+function M.setup(opts)
+  config = vim.tbl_deep_extend("force", vim.deepcopy(default_config), opts or {})
+  M.config = config
+  state.border_hl = config.border_highlight or "FloatBorder"
+  state.notify = nil
+  setup_autocmds()
+  setup_commands()
+  return config
 end
 
 return M

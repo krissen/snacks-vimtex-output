@@ -1,0 +1,17 @@
+# Build artifacts
+/dist/
+/doc/tags
+
+# Editor settings
+/.vscode/
+/.idea/
+*.swp
+*.swo
+*.un~
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Lua tooling
+/.stylua-cache

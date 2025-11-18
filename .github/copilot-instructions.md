@@ -90,3 +90,35 @@ This plugin integrates with:
 - **Neovim APIs**: Uses floating windows, buffers, timers, and autocmds
 
 When suggesting changes, be mindful of these integration boundaries and test compatibility.
+
+## Commit Message Format (MANDATORY)
+
+All commit messages **must** follow this exact format:
+```
+(scope) Brief description of the change
+```
+
+**Rules:**
+- The scope **must** be a single word enclosed in parentheses
+- The scope should be lowercase
+- Use a compound word (e.g., `auto-hide`, `config-merge`) only if absolutely necessary
+- There must be exactly one space between the closing parenthesis and the description
+- The description should be concise and written in imperative mood
+
+**Common scopes:**
+- `docs` - Documentation changes
+- `config` - Configuration-related changes
+- `window` - Window rendering or positioning
+- `notify` - Notification system changes
+- `state` - State management changes
+- `poll` - Polling mechanism changes
+- `event` - Event handler changes
+- `fix` - Bug fixes
+- `refactor` - Code refactoring
+- `meta` - Repository meta files or tooling
+
+**Examples:**
+- `(docs) Fix default value inconsistencies in README`
+- `(config) Add auto_hide option for successful builds`
+- `(window) Adjust mini mode dimensions for small terminals`
+- `(notify) Implement persist_failure configuration`

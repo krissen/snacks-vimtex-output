@@ -165,8 +165,9 @@ end
 
 -- Interpret persist_failure config values (-1/0/true for indefinite persistence,
 -- positive numbers for auto-dismiss seconds, false to disable) and attach the
--- appropriate notification options so failure messages stay visible for the
--- requested duration.
+-- requested duration. Snacks' notifier expects `keep` to be a callback, so we
+-- only rely on timeout semantics that both snacks.nvim and vim.notify support
+-- to avoid type mismatches.
 local function failure_notification_options(notifications)
   local failure_opts = { replace = failure_notification_handle() }
   local persist = notifications and notifications.persist_failure
@@ -185,11 +186,9 @@ local function failure_notification_options(notifications)
     else
       failure_opts.timeout = persist * 1000
     end
-    failure_opts.keep = true
     return failure_opts
   end
   failure_opts.timeout = false
-  failure_opts.keep = true
   return failure_opts
 end
 

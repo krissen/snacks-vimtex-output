@@ -1,12 +1,82 @@
 # snacks-vimtex-output
 
-Snacks-style floating overlay for [VimTeX](https://github.com/lervag/vimtex) compiler output. The plugin mirrors the familiar snacks.notify aesthetic and streams `latexmk` logs into a minimal floating window that can expand for focused inspection while surfacing build status via notifications.
+Floating overlay for [VimTeX](https://github.com/lervag/vimtex) compiler output. The plugin streams `latexmk` logs into a minimal floating window that can expand for focused inspection while surfacing build status via notifications. Optionally integrates with [snacks.nvim](https://github.com/folke/snacks.nvim) for enhanced notifications.
 
 ## Requirements
 
 - Neovim 0.9 or newer (0.10+ recommended for the best floating window APIs)
 - [VimTeX](https://github.com/lervag/vimtex)
-- [snacks.nvim](https://github.com/folke/snacks.nvim) for fancy notifications (falls back to `vim.notify` automatically)
+- [snacks.nvim](https://github.com/folke/snacks.nvim) *(optional)* for enhanced notifications
+
+## Architecture & Backend
+
+Understanding what this plugin uses under the hood:
+
+### Floating Window (Overlay)
+
+The overlay window is implemented using **native Neovim floating window APIs** (`nvim_open_win`, `nvim_win_set_config`). It does not depend on snacks.nvim or any other UI framework. The window dimensions, positioning, borders, and layout are all calculated and managed directly by this plugin.
+
+**What this means:**
+- The overlay works with or without snacks.nvim installed
+- Window behavior is independent of your notification backend
+- You have full control over dimensions and positioning through the plugin's configuration
+
+### Notification Backend
+
+Notifications (build started/finished/failed messages) use a **fallback chain** to determine which backend to use:
+
+1. **Custom notifier** (if you provide `notifier` in `setup()`) — highest priority
+2. **snacks.notify** (if `require("snacks")` succeeds and `snacks.notify` exists)
+3. **vim.notify** (Neovim's built-in notification function) — guaranteed fallback
+
+**What this means:**
+- If snacks.nvim is installed, `snacks.notify` will be used automatically (even if you've set `enabled = false` in Snacks' own config — the function still exists)
+- To force vanilla `vim.notify` while snacks.nvim is installed, provide an explicit `notifier` table in `setup()` (see Configuration below)
+- Without snacks.nvim, the plugin works fine using `vim.notify`
+
+**Example: Force vanilla notifications**
+
+```lua
+require("snacks-vimtex-output").setup({
+  notifier = {
+    info = function(msg, opts) vim.notify(msg, vim.log.levels.INFO, opts) end,
+    warn = function(msg, opts) vim.notify(msg, vim.log.levels.WARN, opts) end,
+    error = function(msg, opts) vim.notify(msg, vim.log.levels.ERROR, opts) end,
+  },
+})
+```
+
+### Integration with VimTeX
+
+The plugin hooks into VimTeX's compiler events (`VimtexEventCompiling`, `VimtexEventCompileSuccess`, etc.) and reads the log file path from `vim.b.vimtex.compiler.output`. VimTeX is the only hard dependency; everything else is optional.
+
+## Prior Art & Scope
+
+This plugin addresses a specific gap in the Neovim LaTeX ecosystem: **a VimTeX-aware overlay for compilation output**.
+
+### What Already Exists
+
+We've surveyed the landscape of similar tools to understand where this plugin fits:
+
+**VimTeX itself** handles compilation (via latexmk), log parsing, and error navigation through quickfix/location lists. It displays output in traditional splits, not as an overlay UI. This plugin builds on VimTeX's events and APIs rather than reimplementing its compilation logic.
+
+**General terminal/job plugins** (like `toggleterm.nvim`) can display arbitrary command output in floating terminals. However, they lack VimTeX-specific integration: no automatic hooking into compilation events, no understanding of LaTeX log structure, and no awareness of VimTeX's forward search or error navigation.
+
+**Diagnostics UI plugins** (like `trouble.nvim`, `noice.nvim`) provide beautiful floating windows for LSP diagnostics, quickfix lists, and notifications. While they could theoretically display VimTeX errors if mapped to diagnostics, they aren't designed for live compilation output streaming or LaTeX-specific workflow integration.
+
+**General task runners** (like `overseer.nvim` with 1.7k stars, or `compiler.nvim` with 633 stars) manage build tasks across many languages and can display output. They're powerful for generic task management but don't provide the tight VimTeX integration or the specific overlay UX this plugin offers (compact mini mode, auto-hide on success, color-coded status borders).
+
+**snacks.nvim** itself is a UI toolkit providing notifications, popups, and other interface components. This plugin uses it only as an optional notification backend—the core overlay functionality uses native Neovim floating window APIs.
+
+### What's Missing (and Why This Plugin Exists)
+
+No existing plugin combines:
+- **VimTeX-aware integration**: Hooks into VimTeX compilation events (`VimtexEventCompiling`, `VimtexEventCompileSuccess`, etc.)
+- **Live overlay UI**: Streaming log updates in a dedicated floating window with mini/focus modes
+- **Smart auto-hide**: Automatically dismissing on successful builds to reduce clutter
+- **Status-aware presentation**: Color-coded borders and notifications reflecting build state
+
+This plugin fills that niche by providing a specialized UI layer on top of VimTeX's compilation engine, without duplicating its core functionality.
 
 ## Alternatives & Comparison
 
@@ -20,7 +90,7 @@ VimTeX provides a stock compiler output buffer accessible via `:VimtexCompileOut
 |---------|---------------------|-------------------|
 | **Display style** | Floating window with compact/focused modes | Traditional split/window buffer |
 | **Auto-updates** | Live streaming during compilation | Live streaming during compilation |
-| **UI integration** | Snacks.nvim-style notifications (persistent on errors) | Messages appear in `:messages` |
+| **UI integration** | Optional enhanced notifications via snacks.nvim | Messages appear in `:messages` |
 | **Auto-hide** | Automatically hides on successful builds (configurable) | Stays open until manually closed |
 | **Visual feedback** | Color-coded borders (green for success, red for errors) | Standard buffer appearance |
 | **Workspace impact** | Overlays workspace (may cover content) | Creates/reuses split (changes layout) |
@@ -30,7 +100,6 @@ VimTeX provides a stock compiler output buffer accessible via `:VimtexCompileOut
 
 - You prefer floating window UIs that minimize layout changes
 - You appreciate visual status indicators (border colors, notifications)
-- You're already using snacks.nvim and want consistent UI aesthetics
 - You want automatic cleanup (hide on success) to reduce clutter
 
 **When to stick with VimTeX's built-in output:**
@@ -50,7 +119,8 @@ Both approaches are valid; this plugin complements VimTeX rather than replacing 
 ```lua
 {
   "krissen/snacks-vimtex-output",
-  dependencies = { "lervag/vimtex", "folke/snacks.nvim" },
+  dependencies = { "lervag/vimtex" },
+  -- Optional: Add "folke/snacks.nvim" to dependencies for enhanced notifications
   ft = "tex",
   config = function()
     require("snacks-vimtex-output").setup({
@@ -68,14 +138,15 @@ Both approaches are valid; this plugin complements VimTeX rather than replacing 
 ```lua
 use({
   "krissen/snacks-vimtex-output",
-  requires = { "lervag/vimtex", "folke/snacks.nvim" },
+  requires = { "lervag/vimtex" },
+  -- Optional: Add "folke/snacks.nvim" for enhanced notifications
   config = function()
     require("snacks-vimtex-output").setup()
   end,
 })
 ```
 
-If you prefer another notifier (such as `noice.nvim` or a custom callback), pass a table with `info`, `warn`, and `error` functions via the `notifier` option.
+**Note:** The plugin automatically detects and uses snacks.nvim if it's installed. If you want to use a different notification backend (such as `noice.nvim` or a custom callback), or if you want to force vanilla `vim.notify` despite having snacks.nvim installed, provide a `notifier` table with `info`, `warn`, and `error` functions via the `notifier` option in setup (see Architecture & Backend and Configuration sections).
 
 ## Usage
 
@@ -164,9 +235,46 @@ require("snacks-vimtex-output").setup({
     title = "VimTeX", -- label injected into notification popups
     persist_failure = true, -- keep the most recent failure notification visible until a success replaces it
   },
-  notifier = nil, -- table with info/warn/error overrides (falls back to snacks.notify/vim.notify)
+  notifier = nil, -- custom notification backend (see "Notification Backends" below)
 })
 ```
+
+### Notification Backends
+
+By default, the plugin uses an **automatic fallback chain** for notifications:
+
+1. If you provide a custom `notifier` table in `setup()`, it's used
+2. Otherwise, if `snacks.notify` is available, it's used
+3. Otherwise, `vim.notify` is used as the final fallback
+
+**To use a custom notification backend**, provide a `notifier` table with three functions:
+
+```lua
+require("snacks-vimtex-output").setup({
+  notifier = {
+    info = function(msg, opts)
+      -- Your custom info notification
+      -- opts.title is always set to config.notifications.title (default "VimTeX")
+      vim.notify(msg, vim.log.levels.INFO, opts)
+    end,
+    warn = function(msg, opts)
+      -- Your custom warning notification
+      vim.notify(msg, vim.log.levels.WARN, opts)
+    end,
+    error = function(msg, opts)
+      -- Your custom error notification
+      -- opts.timeout and opts.keep may be set for persistent failure notifications
+      vim.notify(msg, vim.log.levels.ERROR, opts)
+    end,
+  },
+})
+```
+
+**Common use cases:**
+
+- **Force vanilla `vim.notify`** even when snacks.nvim is installed (see example in Architecture & Backend section above)
+- **Integrate with noice.nvim** or another notification plugin
+- **Custom logging** or notification routing (e.g., send build failures to a separate window or file)
 
 ### Tips
 
@@ -174,7 +282,7 @@ require("snacks-vimtex-output").setup({
 - Raise `mini.row_offset` (default 5) if you use a tall statusline and need extra breathing room above it.
 - Set `notifications.persist_failure = false` if you prefer failure popups to fade like the rest of your notifications.
 - Set `auto_hide.enabled = false` to keep successful builds on screen until you close them.
-- Provide a `notifier` table if you want to integrate with another notification framework.
+- Provide a `notifier` table if you want to integrate with another notification framework or force vanilla `vim.notify`.
 - All helpers live on the module table, so you can call them from custom commands or statuslines.
 
 ## Troubleshooting
@@ -205,9 +313,9 @@ require("snacks-vimtex-output").setup({
 
 1. **Notifications are disabled**. Check that `notifications.enabled` is not explicitly set to `false`.
 
-2. **snacks.nvim is not installed**. The plugin falls back to `vim.notify` if snacks is unavailable, but ensure your Neovim version supports the notify API (0.5+).
+2. **No notification backend available**. Ensure your Neovim version supports the notify API (0.5+). The plugin falls back to `vim.notify` if snacks.nvim is unavailable.
 
-3. **Custom notifier is misconfigured**. If you provided a `notifier` table, ensure it has `info`, `warn`, and `error` functions.
+3. **Custom notifier is misconfigured**. If you provided a `notifier` table, ensure it has `info`, `warn`, and `error` functions that are working correctly.
 
 ### The overlay hides too quickly after successful builds
 

@@ -4,6 +4,9 @@
 local M = {}
 
 local uv = vim.uv or vim.loop
+-- Shared helpers provide consistent command normalization and notifier detection across modules.
+local util = require("output-panel.util")
+local normalize_command = util.normalize_command
 
 local default_config = {
   -- Dimensions for the unfocused mini overlay
@@ -115,23 +118,6 @@ local function command_job_active()
   return state.job and state.job.kind == "command" and state.job.active ~= false
 end
 
-local function normalize_command(cmd)
-  if type(cmd) == "function" then
-    cmd = cmd()
-  end
-  if type(cmd) == "string" then
-    if vim.fn.has("win32") == 1 then
-      cmd = { "cmd.exe", "/c", cmd }
-    else
-      cmd = { "sh", "-c", cmd }
-    end
-  end
-  if type(cmd) ~= "table" then
-    return nil
-  end
-  return cmd
-end
-
 local function open_log_file(path)
   local target = path or (vim.fn.tempname() .. ".log")
   local ok, handle = pcall(io.open, target, "w+")
@@ -172,33 +158,9 @@ local function notifier()
     state.notify = cfg.notifier
     return state.notify
   end
-  -- Default to vim.notify, but upgrade to snacks.notify if available
-  local notify = {
-    info = function(msg, opts)
-      return vim.notify(msg, vim.log.levels.INFO, opts)
-    end,
-    warn = function(msg, opts)
-      return vim.notify(msg, vim.log.levels.WARN, opts)
-    end,
-    error = function(msg, opts)
-      return vim.notify(msg, vim.log.levels.ERROR, opts)
-    end,
-  }
-  -- Detect snacks.nvim and use its richer notification API if present
-  local ok, snacks = pcall(require, "snacks")
-  if ok and snacks.notify then
-    notify.info = function(msg, opts)
-      return snacks.notify.info(msg, opts)
-    end
-    notify.warn = function(msg, opts)
-      return snacks.notify.warn(msg, opts)
-    end
-    notify.error = function(msg, opts)
-      return snacks.notify.error(msg, opts)
-    end
-  end
-  state.notify = notify
-  return notify
+  -- Fallback to the shared helper so snacks/vim.notify auto-detection stays in sync with knit.run
+  state.notify = util.resolve_notifier()
+  return state.notify
 end
 
 -- Send a notification at the specified level (info/warn/error) with optional config overrides.
@@ -402,14 +364,15 @@ local function resolve_target(path, source_buf)
   return nil
 end
 
+-- Ensure a reusable scratch buffer exists so the panel can reopen previous output on demand.
 local function ensure_output_buffer()
   if state.buf and vim.api.nvim_buf_is_valid(state.buf) then
     return state.buf
   end
   local buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = buf })
+  -- Hide the buffer when unfocused instead of wiping so users can manually revisit output later.
+  vim.api.nvim_set_option_value("bufhidden", "hide", { buf = buf })
   vim.api.nvim_set_option_value("buftype", "nofile", { buf = buf })
-  vim.api.nvim_set_option_value("buflisted", false, { buf = buf })
   vim.api.nvim_set_option_value("swapfile", false, { buf = buf })
   vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
   vim.api.nvim_set_option_value("filetype", "vimtexoutput", { buf = buf })

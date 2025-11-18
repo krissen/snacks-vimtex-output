@@ -7,54 +7,12 @@
 -- labels, timeouts, completion callbacks, and output-panel streaming.
 
 local uv = vim.uv or vim.loop
+-- Share helpers with output-panel so command normalisation and notifier detection behave identically.
+local util = require("output-panel.util")
+local normalize_cmd = util.normalize_command
+local resolve_notifier = util.resolve_notifier
 
 local M = {}
-
--- Normalise user-provided commands into vim.fn.jobstart friendly tables.
-local function normalize_cmd(cmd)
-  if type(cmd) == "function" then
-    cmd = cmd()
-  end
-  if type(cmd) == "string" then
-    if vim.fn.has("win32") == 1 then
-      cmd = { "cmd.exe", "/c", cmd }
-    else
-      cmd = { "sh", "-c", cmd }
-    end
-  end
-  if type(cmd) ~= "table" then
-    return nil
-  end
-  return cmd
-end
-
--- Resolve snacks.notify (if present) and fall back to vim.notify.
-local function resolve_notifier()
-  local notify = {
-    info = function(msg, opts)
-      vim.notify(msg, vim.log.levels.INFO, opts)
-    end,
-    warn = function(msg, opts)
-      vim.notify(msg, vim.log.levels.WARN, opts)
-    end,
-    error = function(msg, opts)
-      vim.notify(msg, vim.log.levels.ERROR, opts)
-    end,
-  }
-  local ok, snacks = pcall(require, "snacks")
-  if ok and snacks.notify then
-    notify.info = function(msg, opts)
-      snacks.notify.info(msg, opts)
-    end
-    notify.warn = function(msg, opts)
-      snacks.notify.warn(msg, opts)
-    end
-    notify.error = function(msg, opts)
-      snacks.notify.error(msg, opts)
-    end
-  end
-  return notify
-end
 
 local function format_duration(duration)
   if not duration then

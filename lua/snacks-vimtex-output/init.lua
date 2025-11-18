@@ -670,13 +670,16 @@ function M.setup()
 	})
 
 	vim.api.nvim_create_user_command("VimtexOutputShow", function()
-		M.toggle_focus()
+		M.show()
 	end, {})
 	vim.api.nvim_create_user_command("VimtexOutputHide", function()
 		M.hide()
 	end, {})
 	vim.api.nvim_create_user_command("VimtexOutputToggle", function()
 		M.toggle()
+	end, {})
+	vim.api.nvim_create_user_command("VimtexOutputToggleFocus", function()
+		M.toggle_focus()
 	end, {})
 end
 

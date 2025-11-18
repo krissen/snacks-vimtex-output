@@ -18,18 +18,17 @@ VimTeX provides a stock compiler output buffer accessible via `:VimtexCompileOut
 
 | Feature | snacks-vimtex-output | VimTeX stock output |
 |---------|---------------------|-------------------|
-| **Display style** | Non-intrusive floating window with compact/focused modes | Traditional split/window buffer |
-| **Auto-updates** | Live streaming during compilation | Manual refresh needed |
-| **UI integration** | Snacks.nvim-style notifications with status updates | No notifications |
+| **Display style** | Floating window with compact/focused modes | Traditional split/window buffer |
+| **Auto-updates** | Live streaming during compilation | Live streaming during compilation |
+| **UI integration** | Snacks.nvim-style notifications (persistent on errors) | Messages appear in `:messages` |
 | **Auto-hide** | Automatically hides on successful builds (configurable) | Stays open until manually closed |
 | **Visual feedback** | Color-coded borders (green for success, red for errors) | Standard buffer appearance |
-| **Workspace impact** | Overlays your workspace without changing layout | Splits/windows affect layout |
-| **Interaction** | Read-only overlay optimized for quick glances | Full buffer with standard editing capabilities |
+| **Workspace impact** | Overlays workspace (may cover content) | Creates/reuses split (changes layout) |
+| **Buffer type** | Read-only scratch buffer | Standard buffer in the buffer list |
 
 **When to use this plugin:**
 
-- You prefer modern floating window UIs that don't disrupt your workspace layout
-- You want live streaming of compilation output without manual refreshes
+- You prefer floating window UIs that minimize layout changes
 - You appreciate visual status indicators (border colors, notifications)
 - You're already using snacks.nvim and want consistent UI aesthetics
 - You want automatic cleanup (hide on success) to reduce clutter
@@ -37,10 +36,10 @@ VimTeX provides a stock compiler output buffer accessible via `:VimtexCompileOut
 **When to stick with VimTeX's built-in output:**
 
 - You prefer traditional buffer-based workflows
-- You need to search, yank, or manipulate the log content frequently
 - You want the output to persist in a predictable window/split location
 - You don't want additional plugin dependencies
 - You prefer complete control over when the output appears and disappears
+- You want the buffer in your buffer list for standard navigation
 
 Both approaches are valid; this plugin complements VimTeX rather than replacing its output functionality.
 

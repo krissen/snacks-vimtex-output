@@ -290,20 +290,33 @@ command you want to monitor.
 
 Neovim already offers several ways to run commands asynchronously. The panel
 deliberately fills the gap between a full task manager and raw quickfix output.
+In particular, [Overseer.nvim](https://github.com/stevearc/overseer.nvim) should
+be your first stop whenever you want templated builds, task registries, file
+watchers, or an interactive dashboard. Reach for output-panel.nvim when you only
+need a single command (or VimTeX) log visible in the background with minimal
+setup and no extra UI to manage.
 
 ### Overseer.nvim
 
 [Overseer](https://github.com/stevearc/overseer.nvim) is the closest feature
 match: it manages a registry of tasks, templates, diagnostics integration, and
-per-task metadata. That power comes at the cost of additional configuration
-(`use_terminal`, component pipelines, task bundles, etc.) and a sizeable UI that
-defaults to a dashboard-style split. If you only ever need to stream a single
-long-running command, output-panel.nvim keeps the UX minimal: no task list, no
-history, just a single scratch buffer that auto-opens on failure/success and can
-be wired directly to VimTeX hooks or ad-hoc shell commands. Overseer can be
-configured to behave similarly, but doing so typically requires writing task
-definitions and tweaking layout settings—effort that outweighs the benefit when
-you only need a “fire-and-forget” pane.
+per-task metadata while exposing quick actions (rerun, stop, restart, watch on
+save) and a toggleable dashboard (`:OverseerToggle`) that lists every job. That
+power comes at the cost of additional configuration (`use_terminal`, component
+pipelines, task bundles, recommended dependencies like `plenary.nvim` and
+`nvim-notify`, etc.) and a larger UI footprint. If you want that level of
+control—multiple concurrent builds, VS Code-style task definitions, or a central
+place to inspect historical runs—Overseer is absolutely the better fit.
+
+output-panel.nvim intentionally stops earlier: no task list, no history, just a
+single scratch buffer that auto-opens on failure/success and can be wired
+directly to VimTeX hooks or ad-hoc shell commands. It excels when you prefer to
+trigger commands via existing mappings (`:VimtexCompile`, custom keymaps, save
+autocmds) and simply want to watch stdout scroll in a compact overlay without
+learning a new task abstraction. Overseer can be configured to behave similarly,
+but doing so typically requires authoring task definitions and tweaking layout
+settings—effort that outweighs the benefit when you only need a “fire-and-forget”
+pane.
 
 ### ToggleTerm and generic terminals
 

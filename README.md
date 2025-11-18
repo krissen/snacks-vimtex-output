@@ -8,6 +8,42 @@ Snacks-style floating overlay for [VimTeX](https://github.com/lervag/vimtex) com
 - [VimTeX](https://github.com/lervag/vimtex)
 - [snacks.nvim](https://github.com/folke/snacks.nvim) for fancy notifications (falls back to `vim.notify` automatically)
 
+## Alternatives & Comparison
+
+### VimTeX's Built-in Output Buffer
+
+VimTeX provides a stock compiler output buffer accessible via `:VimtexCompileOutput` (default keybinding `\lo`). This opens the log file in a standard Neovim buffer in a new window or split.
+
+**How this plugin differs:**
+
+| Feature | snacks-vimtex-output | VimTeX stock output |
+|---------|---------------------|-------------------|
+| **Display style** | Non-intrusive floating window with compact/focused modes | Traditional split/window buffer |
+| **Auto-updates** | Live streaming during compilation | Manual refresh needed |
+| **UI integration** | Snacks.nvim-style notifications with status updates | No notifications |
+| **Auto-hide** | Automatically hides on successful builds (configurable) | Stays open until manually closed |
+| **Visual feedback** | Color-coded borders (green for success, red for errors) | Standard buffer appearance |
+| **Workspace impact** | Overlays your workspace without changing layout | Splits/windows affect layout |
+| **Interaction** | Read-only overlay optimized for quick glances | Full buffer with standard editing capabilities |
+
+**When to use this plugin:**
+
+- You prefer modern floating window UIs that don't disrupt your workspace layout
+- You want live streaming of compilation output without manual refreshes
+- You appreciate visual status indicators (border colors, notifications)
+- You're already using snacks.nvim and want consistent UI aesthetics
+- You want automatic cleanup (hide on success) to reduce clutter
+
+**When to stick with VimTeX's built-in output:**
+
+- You prefer traditional buffer-based workflows
+- You need to search, yank, or manipulate the log content frequently
+- You want the output to persist in a predictable window/split location
+- You don't want additional plugin dependencies
+- You prefer complete control over when the output appears and disappears
+
+Both approaches are valid; this plugin complements VimTeX rather than replacing its output functionality.
+
 ## Installation
 
 ### lazy.nvim
@@ -21,7 +57,7 @@ Snacks-style floating overlay for [VimTeX](https://github.com/lervag/vimtex) com
     require("snacks-vimtex-output").setup({
       -- optional overrides; see below for the full list
       mini = {
-        width_scale = 0.6,
+        width_scale = 0.75,
       },
     })
   end,
@@ -90,10 +126,10 @@ vim.keymap.set("n", "<leader>lO", ":VimtexOutputToggleFocus<CR>", { silent = tru
 ```lua
 require("snacks-vimtex-output").setup({
   mini = {
-    width_scale = 0.55,
+    width_scale = 0.90,
     width_min = 48,
     width_max = 120,
-    height_ratio = 0.22,
+    height_ratio = 0.10,
     height_min = 5,
     height_max = 14,
     row_anchor = "bottom",
@@ -113,7 +149,7 @@ require("snacks-vimtex-output").setup({
     horizontal_align = 0.5,
     col_offset = 0,
   },
-  scrolloff_margin = 2, -- extra cursor padding while the mini overlay is visible
+  scrolloff_margin = 5, -- extra cursor padding while the mini overlay is visible
   border_highlight = "FloatBorder", -- default window border highlight group
   auto_open = {
     enabled = false, -- set to true to automatically pop open the overlay when VimTeX starts compiling
@@ -141,6 +177,78 @@ require("snacks-vimtex-output").setup({
 - Set `auto_hide.enabled = false` to keep successful builds on screen until you close them.
 - Provide a `notifier` table if you want to integrate with another notification framework.
 - All helpers live on the module table, so you can call them from custom commands or statuslines.
+
+## Troubleshooting
+
+### The overlay doesn't appear when compilation starts
+
+**Possible causes:**
+
+1. **Auto-open is disabled** (default behavior). The overlay only opens automatically if you set `auto_open.enabled = true` in your config. Otherwise, you need to manually trigger it with `:VimtexOutputToggle` or `require("snacks-vimtex-output").show()`.
+
+2. **VimTeX is not properly initialized**. Ensure VimTeX is loaded and configured correctly. Check that `vim.b.vimtex` exists in your TeX buffer.
+
+3. **Log file doesn't exist yet**. The plugin needs VimTeX's compiler output file. If auto-open is enabled but the overlay doesn't appear, try increasing `auto_open.retries` or `auto_open.delay` to give latexmk more time to create the log file.
+
+### The overlay appears but shows no content
+
+**Possible causes:**
+
+1. **Log file is empty or being recreated**. VimTeX sometimes recreates the log file during compilation. The plugin's polling mechanism should pick up changes, but you can manually refresh by hiding and showing again.
+
+2. **Permissions issue**. Ensure Neovim has read access to the compiler output file (typically a `.log` file in your project directory).
+
+3. **Wrong file path**. The plugin reads from `vim.b.vimtex.compiler.output`. If VimTeX is configured with a custom output directory, ensure it's correctly set.
+
+### Notifications aren't showing
+
+**Possible causes:**
+
+1. **Notifications are disabled**. Check that `notifications.enabled` is not explicitly set to `false`.
+
+2. **snacks.nvim is not installed**. The plugin falls back to `vim.notify` if snacks is unavailable, but ensure your Neovim version supports the notify API (0.5+).
+
+3. **Custom notifier is misconfigured**. If you provided a `notifier` table, ensure it has `info`, `warn`, and `error` functions.
+
+### The overlay hides too quickly after successful builds
+
+Increase the `auto_hide.delay` value (default is 3000ms):
+
+```lua
+require("snacks-vimtex-output").setup({
+  auto_hide = {
+    delay = 5000, -- wait 5 seconds before hiding
+  },
+})
+```
+
+Or disable auto-hide entirely:
+
+```lua
+require("snacks-vimtex-output").setup({
+  auto_hide = {
+    enabled = false,
+  },
+})
+```
+
+### The floating window covers my cursor
+
+The plugin automatically increases `scrolloff` to prevent the overlay from covering the cursor in mini (unfocused) mode. If this isn't working, try increasing `scrolloff_margin`:
+
+```lua
+require("snacks-vimtex-output").setup({
+  scrolloff_margin = 10, -- increase padding above the cursor
+})
+```
+
+### I want to customize the window dimensions
+
+All dimension parameters are configurable. See the Configuration section for the full list. Common adjustments:
+
+- **Wider overlay**: Increase `mini.width_scale` or `mini.width_max`
+- **Taller overlay**: Increase `mini.height_ratio` or `mini.height_max`
+- **Reposition overlay**: Adjust `row_anchor`, `row_offset`, `horizontal_align`, `col_offset`
 
 ## Development
 

@@ -9,7 +9,8 @@ preconfigured profile and example workflow.
 
 ## Requirements
 
-- Neovim **0.10+** (`vim.system` streaming is required for the generic runner)
+- Neovim **0.8+** (`vim.fn.jobstart` powers live streaming; `vim.system`
+  integrations kick in automatically when available)
 - [snacks.nvim](https://github.com/folke/snacks.nvim) *(optional)* — richer
   notifications and theming
 - [VimTeX](https://github.com/lervag/vimtex) *(optional)* — only needed if you
@@ -27,6 +28,8 @@ preconfigured profile and example workflow.
   `snacks.notify` when available. You can also provide a custom notifier.
 - **VimTeX aware** – Ships the original auto-open, auto-hide, and command suite
   for `latexmk` logs, now powered by the same configurable panel.
+- **Knit helper** – `require("knit.run")` is a zero-dependency runner that
+  hooks into the panel only when you opt-in to live output.
 
 ## Installation
 
@@ -86,6 +89,35 @@ Key behaviours:
 - Each run gets its own temporary log file, so you can revisit the output even
   after the command completes.
 
+### Knit helper
+
+`lua/knit/run.lua` ships a lightweight wrapper for RMarkdown/Quarto workflows.
+It mirrors the `run()` API but defaults to plain notifications unless you set
+`output_panel`/`live_output = true`, in which case it proxies to the panel.
+
+```lua
+local knit_run = require("knit.run")
+
+vim.keymap.set("n", "<leader>rk", function()
+  knit_run.run({
+    cmd = { "Rscript", "bifrost__knit.R", "-r", vim.fn.expand("%") },
+    title = "Knit document",
+    success = "Document knitted",
+    error = "Knitting failed",
+    output_panel = true, -- live stream via output-panel.nvim
+    panel = {
+      profile = "knit",
+      focus = false,
+    },
+  })
+end, { desc = "Knit document" })
+```
+
+Without `output_panel` it falls back to snacks.nvim (or `vim.notify`) messages
+while still respecting the provided titles/timeouts. Use the `panel` table to
+adjust the window when live streaming (e.g. set a dedicated profile, tweak
+layout, or disable `notify_start`).
+
 ### VimTeX integration
 
 Install VimTeX, call `setup()`, and the panel automatically follows
@@ -98,6 +130,7 @@ still available:
 | `:VimtexOutputHide` | Close the panel. |
 | `:VimtexOutputToggle` | Toggle visibility. |
 | `:VimtexOutputToggleFocus` | Switch between mini/focus layouts. |
+| `:VimtexOutputToggleFollow` | Toggle follow/tail mode. |
 
 The overlay attaches to VimTeX's compiler log (usually the `latexmk` stdout
 buffer) and retains all prior behaviours—auto-open on compilation, optional
@@ -110,6 +143,7 @@ local panel = require("output-panel")
 panel.show()          -- open panel for the current target
 panel.hide()          -- hide panel
 panel.toggle()        -- toggle visibility
+panel.toggle_follow() -- toggle follow/tail mode
 panel.toggle_focus()  -- swap between mini/focus layouts
 panel.run({...})      -- run arbitrary commands (see above)
 ```
@@ -162,6 +196,11 @@ require("output-panel").setup({
     title = "VimTeX",
     persist_failure = true,
   },
+  follow = {
+    enabled = true,
+  },
+  max_lines = 4000,
+  open_on_error = true,
   notifier = nil,
   profiles = {
     knit = {
@@ -171,6 +210,13 @@ require("output-panel").setup({
   },
 })
 ```
+
+`follow.enabled` keeps the panel in tail/follow mode whenever it's opened.
+Toggle it ad-hoc via `:VimtexOutputToggleFollow` (or
+`require("output-panel").toggle_follow()`). `max_lines` trims the scratch buffer
+so very chatty commands never retain more than the configured line count, and
+`open_on_error` makes failures pop the panel even if live output was disabled
+while the job ran.
 
 ### Profiles
 
@@ -200,12 +246,16 @@ This applies everywhere—VimTeX events and manual command runs.
   compiling.
 - Disable `auto_hide` globally or per profile if you want successful runs to
   stay visible.
+- Toggle follow mode with `:VimtexOutputToggleFollow` before scrolling through
+  older log lines.
+- Lower `max_lines` if you're running extremely verbose scripts and want to keep
+  the scratch buffer tighter.
 - Assign `notifier` to integrate with `noice.nvim`, `rcarriga/nvim-notify`, or
   any custom logger.
 
 ## Troubleshooting
 
-- **Nothing shows up when running a command** – Ensure you're on Neovim 0.10+
+- **Nothing shows up when running a command** – Ensure you're on Neovim 0.8+
   and that the command exists in your `$PATH`. The panel writes every chunk to a
   temp file; open it via `:edit {path}` to inspect raw output.
 - **VimTeX overlay never opens** – Set `auto_open.enabled = true` or run one of

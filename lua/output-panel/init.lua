@@ -53,6 +53,11 @@ local default_config = {
   },
   notifier = nil,
   border_highlight = "FloatBorder",
+  follow = {
+    enabled = true,
+  },
+  max_lines = 4000,
+  open_on_error = true,
   profiles = {},
 }
 
@@ -79,6 +84,7 @@ local state = {
   last_stat = nil,
   status = "idle",
   focused = false,
+  follow = true,
   prev_win = nil,
   border_hl = config.border_highlight,
   scrolloff_restore = nil,
@@ -401,8 +407,9 @@ local function ensure_output_buffer()
     return state.buf
   end
   local buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_set_option_value("bufhidden", "hide", { buf = buf })
+  vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = buf })
   vim.api.nvim_set_option_value("buftype", "nofile", { buf = buf })
+  vim.api.nvim_set_option_value("buflisted", false, { buf = buf })
   vim.api.nvim_set_option_value("swapfile", false, { buf = buf })
   vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
   vim.api.nvim_set_option_value("filetype", "vimtexoutput", { buf = buf })
@@ -410,8 +417,87 @@ local function ensure_output_buffer()
   return buf
 end
 
+-- Apply a callback to the scratch buffer while safely toggling the modifiable flag.
+local function apply_to_buffer(buf, cb)
+  if not buf or not vim.api.nvim_buf_is_valid(buf) or type(cb) ~= "function" then
+    return
+  end
+  local function run()
+    if not vim.api.nvim_buf_is_valid(buf) then
+      return
+    end
+    local was_modifiable = vim.api.nvim_get_option_value("modifiable", { buf = buf })
+    if not was_modifiable then
+      vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
+    end
+    local ok, err = pcall(cb, buf)
+    if not ok then
+      vim.schedule(function()
+        notify("error", string.format("output-panel buffer update failed: %s", err))
+      end)
+    end
+    if not was_modifiable and vim.api.nvim_buf_is_valid(buf) then
+      vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
+    end
+    if vim.api.nvim_buf_is_valid(buf) then
+      vim.api.nvim_set_option_value("modified", false, { buf = buf })
+    end
+  end
+  if vim.in_fast_event() then
+    vim.schedule(run)
+  else
+    run()
+  end
+end
+
+-- Replace the entire buffer with a new set of lines (within apply_to_buffer safeguards).
+local function replace_buffer_lines(buf, lines)
+  apply_to_buffer(buf, function(target)
+    vim.api.nvim_buf_set_lines(target, 0, -1, false, lines)
+  end)
+end
+
+-- Trim the newest lines to keep the buffer below the configured max line count.
+local function clamp_lines(lines)
+  local cfg = current_config()
+  local limit = cfg.max_lines
+  if not limit or limit <= 0 or not lines then
+    return lines
+  end
+  if #lines <= limit then
+    return lines
+  end
+  local start = #lines - limit + 1
+  local trimmed = {}
+  for i = start, #lines do
+    trimmed[#trimmed + 1] = lines[i]
+  end
+  return trimmed
+end
+
+-- Determine whether follow/tail mode should be enabled by default.
+local function follow_default()
+  local cfg = current_config()
+  local follow_cfg = cfg.follow or {}
+  return follow_cfg.enabled ~= false
+end
+
+-- Update follow mode, defaulting to the configured preference when value is nil.
+local function set_follow(value)
+  if value == nil then
+    state.follow = follow_default()
+  else
+    state.follow = value and true or false
+  end
+end
+
 local function scroll_to_bottom()
-  if state.focused or not state.win or not vim.api.nvim_win_is_valid(state.win) then
+  if
+    not state.follow
+    or state.focused
+    or not state.win
+    or not vim.api.nvim_win_is_valid(state.win)
+  then
     return
   end
   if not state.buf or not vim.api.nvim_buf_is_valid(state.buf) then
@@ -452,15 +538,8 @@ local function update_buffer_from_file(force)
   if #lines == 0 then
     lines = { "" }
   end
-  local mod = vim.api.nvim_get_option_value("modifiable", { buf = buf })
-  if not mod then
-    vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
-  end
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-  vim.api.nvim_set_option_value("modified", false, { buf = buf })
-  if not mod then
-    vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
-  end
+  lines = clamp_lines(lines)
+  replace_buffer_lines(buf, lines)
   state.last_stat = stat
   scroll_to_bottom()
   return true
@@ -639,6 +718,11 @@ local function render_window(opts)
     vim.api.nvim_win_set_buf(state.win, buf)
     vim.api.nvim_win_set_config(state.win, win_config)
   else
+    if opts.follow ~= nil then
+      set_follow(opts.follow)
+    else
+      set_follow(nil)
+    end
     local open_config = vim.deepcopy(win_config)
     open_config.noautocmd = true
     state.win = vim.api.nvim_open_win(buf, desired_focus, open_config)
@@ -723,6 +807,11 @@ local function open_overlay(opts)
   if opts.focus == nil then
     opts.focus = false
   end
+  if opts.follow ~= nil then
+    set_follow(opts.follow)
+  else
+    set_follow(nil)
+  end
   opts.source_buf = opts.source_buf or vim.api.nvim_get_current_buf()
   if state.status == "running" then
     opts.poll = true
@@ -754,6 +843,15 @@ function M.toggle()
   end
 end
 
+-- Toggle follow/tail mode so users can inspect earlier lines without auto-scroll.
+function M.toggle_follow()
+  state.follow = not state.follow
+  if state.follow then
+    scroll_to_bottom()
+  end
+  notify("info", string.format("Output follow %s", state.follow and "enabled" or "disabled"))
+end
+
 function M.toggle_focus()
   state.hide_token = state.hide_token + 1
   state.render_retry_token = state.render_retry_token + 1
@@ -770,10 +868,6 @@ function M.run(opts)
   opts = opts or {}
   if not opts.cmd then
     notify("error", "output-panel.run() requires a cmd option")
-    return
-  end
-  if type(vim.system) ~= "function" then
-    notify("error", "vim.system is unavailable (requires Neovim 0.10+)")
     return
   end
   if command_job_active() then
@@ -820,6 +914,8 @@ function M.run(opts)
     return
   end
 
+  local stdout_chunks, stderr_chunks = {}, {}
+
   stop_polling()
   set_target(log_path)
   state.job = {
@@ -839,8 +935,8 @@ function M.run(opts)
   state.hide_token = state.hide_token + 1
   state.render_retry_token = state.render_retry_token + 1
 
-  local should_open = opts.open ~= false
-  if should_open then
+  local open_panel = opts.open ~= false
+  if open_panel then
     render_window({ target = log_path, poll = true, focus = opts.focus, title = window_title })
   else
     ensure_output_ready({ target = log_path, quiet = true })
@@ -852,18 +948,43 @@ function M.run(opts)
     notify("info", start_message)
   end
 
-  local function stream_chunk(chunk)
+  -- Append a chunk to both the on-disk log and an in-memory accumulator for notifications.
+  local function stream_chunk(target, chunk)
+    if not chunk or chunk == "" then
+      return
+    end
     append_log(handle, chunk)
     state.last_stat = nil
+    target[#target + 1] = chunk
   end
 
-  local function handle_stream(err, data)
-    if err and err ~= "" then
-      stream_chunk(err)
+  -- Wrap vim.system callbacks so stdout/stderr share the same chunk bookkeeping.
+  local function make_system_handler(target)
+    return function(err, data)
+      if err and err ~= "" then
+        stream_chunk(stderr_chunks, err)
+      end
+      if data and data ~= "" then
+        stream_chunk(target, data)
+      end
     end
-    if data and data ~= "" then
-      stream_chunk(data)
+  end
+
+  -- Convert jobstart line tables into newline-delimited text before streaming.
+  local function handle_job_data(target, data)
+    if type(data) ~= "table" then
+      return
     end
+    local parts = {}
+    for _, line in ipairs(data) do
+      if line and line ~= "" then
+        parts[#parts + 1] = line
+      end
+    end
+    if #parts == 0 then
+      return
+    end
+    stream_chunk(target, table.concat(parts, "\n") .. "\n")
   end
 
   local function finalize_job(obj)
@@ -880,18 +1001,25 @@ function M.run(opts)
     state.running_notified = false
     stop_polling()
     local cfg = current_config()
+    local window_exists = state.win and vim.api.nvim_win_is_valid(state.win)
     if obj.code == 0 then
       state.status = "success"
       state.border_hl = "DiagnosticOk"
-      render_window({ target = log_path, focus = state.focused, border_hl = state.border_hl })
-      schedule_hide(cfg.auto_hide and cfg.auto_hide.delay)
+      if open_panel or window_exists then
+        render_window({ target = log_path, focus = state.focused, border_hl = state.border_hl })
+      end
+      if window_exists then
+        schedule_hide(cfg.auto_hide and cfg.auto_hide.delay)
+      end
       notify("info", (opts.success or (job_title .. " finished")) .. format_duration_suffix())
       state.failure_notification = nil
     else
       state.status = "failure"
       state.border_hl = "DiagnosticError"
       state.hide_token = state.hide_token + 1
-      render_window({ target = log_path, focus = state.focused, border_hl = state.border_hl })
+      if open_panel or window_exists or cfg.open_on_error ~= false then
+        render_window({ target = log_path, focus = state.focused, border_hl = state.border_hl })
+      end
       local failure_opts = { replace = state.failure_notification }
       local notifications = cfg.notifications or {}
       if notifications.persist_failure ~= false then
@@ -908,25 +1036,70 @@ function M.run(opts)
     set_active_config(nil)
   end
 
-  local ok, handle_or_err = pcall(vim.system, command, {
+  local use_system = type(vim.system) == "function"
+  if use_system then
+    local ok, handle_or_err = pcall(vim.system, command, {
+      cwd = opts.cwd,
+      env = opts.env,
+      stdout = make_system_handler(stdout_chunks),
+      stderr = make_system_handler(stderr_chunks),
+    }, function(obj)
+      obj.stdout = table.concat(stdout_chunks)
+      obj.stderr = table.concat(stderr_chunks)
+      vim.schedule(function()
+        finalize_job(obj)
+      end)
+    end)
+
+    if not ok then
+      stream_chunk(stderr_chunks, "Failed to start command: " .. tostring(handle_or_err))
+      finalize_job({
+        code = -1,
+        stdout = table.concat(stdout_chunks),
+        stderr = table.concat(stderr_chunks),
+      })
+      return
+    end
+
+    state.job.handle = handle_or_err
+    return handle_or_err
+  end
+
+  local jobid = vim.fn.jobstart(command, {
     cwd = opts.cwd,
     env = opts.env,
-    stdout = handle_stream,
-    stderr = handle_stream,
-  }, function(obj)
-    vim.schedule(function()
-      finalize_job(obj)
-    end)
-  end)
-
-  if not ok then
-    stream_chunk("Failed to start command: " .. tostring(handle_or_err))
-    finalize_job({ code = -1 })
+    stdout_buffered = false,
+    stderr_buffered = false,
+    on_stdout = function(_, data)
+      handle_job_data(stdout_chunks, data)
+    end,
+    on_stderr = function(_, data)
+      handle_job_data(stderr_chunks, data)
+    end,
+    on_exit = function(_, code)
+      vim.schedule(function()
+        finalize_job({
+          code = code,
+          signal = 0,
+          stdout = table.concat(stdout_chunks),
+          stderr = table.concat(stderr_chunks),
+        })
+      end)
+    end,
+  })
+  if jobid <= 0 then
+    notify("error", "Failed to start command with jobstart()")
+    finalize_job({
+      code = 1,
+      signal = 0,
+      stdout = table.concat(stdout_chunks),
+      stderr = table.concat(stderr_chunks),
+    })
     return
   end
 
-  state.job.handle = handle_or_err
-  return handle_or_err
+  state.job.handle = jobid
+  return jobid
 end
 
 -- Extract VimTeX event context to determine which buffer and log file to track.
@@ -1028,7 +1201,7 @@ local function on_compile_failed(event)
   stop_polling()
   state.hide_token = state.hide_token + 1 -- Cancel any pending auto-hide
   local window_exists = state.win and vim.api.nvim_win_is_valid(state.win)
-  if auto_open_enabled() or window_exists then
+  if auto_open_enabled() or window_exists or cfg.open_on_error ~= false then
     render_window({
       border_hl = "DiagnosticError", -- Red border for failure
       target = ctx.target,
@@ -1105,6 +1278,7 @@ local function setup_commands()
     VimtexOutputHide = M.hide,
     VimtexOutputToggle = M.toggle,
     VimtexOutputToggleFocus = M.toggle_focus,
+    VimtexOutputToggleFollow = M.toggle_follow,
   }
   for name in pairs(commands) do
     pcall(vim.api.nvim_del_user_command, name)

@@ -15,7 +15,7 @@ local default_config = {
     height_min = 5,
     height_max = 14,
     row_anchor = "bottom",
-    row_offset = 3,
+    row_offset = 5,
     horizontal_align = 0.55,
     col_offset = 0,
   },
@@ -558,35 +558,6 @@ local function render_window(opts)
   return state.win
 end
 
-function M.show()
-  state.hide_token = state.hide_token + 1
-  state.render_retry_token = state.render_retry_token + 1
-  render_window({ source_buf = vim.api.nvim_get_current_buf(), focus = false })
-end
-
-function M.hide()
-  state.hide_token = state.hide_token + 1
-  close_window({ reason = "manual" })
-end
-
-function M.toggle()
-  if state.win and vim.api.nvim_win_is_valid(state.win) then
-    M.hide()
-  else
-    M.show()
-  end
-end
-
-function M.toggle_focus()
-  state.hide_token = state.hide_token + 1
-  state.render_retry_token = state.render_retry_token + 1
-  if not state.win or not vim.api.nvim_win_is_valid(state.win) then
-    render_window({ source_buf = vim.api.nvim_get_current_buf(), focus = false })
-    return
-  end
-  render_window({ focus = not state.focused })
-end
-
 local function render_with_retry(opts)
   opts = opts or {}
   local attempts = opts.retry_count or 0
@@ -618,6 +589,51 @@ local function render_with_retry(opts)
     end, delay)
   end
   retry(attempts)
+end
+
+local function open_overlay(opts)
+  opts = opts or {}
+  if opts.focus == nil then
+    opts.focus = false
+  end
+  opts.source_buf = opts.source_buf or vim.api.nvim_get_current_buf()
+  if state.status == "running" then
+    opts.poll = true
+    opts.retry_count = opts.retry_count or (config.auto_open and config.auto_open.retries) or 0
+    opts.retry_delay = opts.retry_delay or (config.auto_open and config.auto_open.delay) or 120
+    render_with_retry(opts)
+  else
+    render_window(opts)
+  end
+end
+
+function M.show()
+  state.hide_token = state.hide_token + 1
+  state.render_retry_token = state.render_retry_token + 1
+  open_overlay()
+end
+
+function M.hide()
+  state.hide_token = state.hide_token + 1
+  close_window({ reason = "manual" })
+end
+
+function M.toggle()
+  if state.win and vim.api.nvim_win_is_valid(state.win) then
+    M.hide()
+  else
+    M.show()
+  end
+end
+
+function M.toggle_focus()
+  state.hide_token = state.hide_token + 1
+  state.render_retry_token = state.render_retry_token + 1
+  if not state.win or not vim.api.nvim_win_is_valid(state.win) then
+    open_overlay()
+    return
+  end
+  render_window({ focus = not state.focused })
 end
 
 local function event_context(event)

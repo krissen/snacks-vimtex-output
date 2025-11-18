@@ -96,7 +96,7 @@ require("snacks-vimtex-output").setup({
     height_min = 5,
     height_max = 14,
     row_anchor = "bottom",
-    row_offset = 3,
+    row_offset = 5,
     horizontal_align = 0.55,
     col_offset = 0,
   },
@@ -134,6 +134,7 @@ require("snacks-vimtex-output").setup({
 ### Tips
 
 - Increase `mini.height_ratio` if your TeX toolchain is especially chatty.
+- Raise `mini.row_offset` (default 5) if you use a tall statusline and need extra breathing room above it.
 - Set `auto_hide.enabled = false` to keep successful builds on screen until you close them.
 - Provide a `notifier` table if you want to integrate with another notification framework.
 - All helpers live on the module table, so you can call them from custom commands or statuslines.

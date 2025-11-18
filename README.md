@@ -1,116 +1,37 @@
-# snacks-vimtex-output
+# output-panel.nvim
 
-Floating overlay for [VimTeX](https://github.com/lervag/vimtex) compiler output. The plugin streams `latexmk` logs into a minimal floating window that can expand for focused inspection while surfacing build status via notifications. Optionally integrates with [snacks.nvim](https://github.com/folke/snacks.nvim) for enhanced notifications.
+A configurable floating output window for Neovim jobs. The plugin began life as a
+VimTeX helper but now exposes a generic runner so any long-running shell
+command—`Rscript`, `pandoc`, custom build scripts, etc.—can stream their stdout
+and stderr into the same lightweight panel while surfacing success/failure
+notifications, with Snacks support kept as an optional treat for extra polish.
+The original VimTeX integration
+remains available as a preconfigured profile and example workflow.
 
 ## Requirements
 
-- Neovim 0.9 or newer (0.10+ recommended for the best floating window APIs)
-- [VimTeX](https://github.com/lervag/vimtex)
-- [snacks.nvim](https://github.com/folke/snacks.nvim) *(optional)* for enhanced notifications
+- Neovim **0.8+** (`vim.fn.jobstart` powers live streaming; `vim.system`
+  integrations kick in automatically when available)
+- [snacks.nvim](https://github.com/folke/snacks.nvim) *(optional)* — richer
+  notifications if you want that extra treat
+- [VimTeX](https://github.com/lervag/vimtex) *(optional)* — only needed if you
+  want automatic LaTeX compiler integration
 
-## Architecture & Backend
+## Highlights
 
-Understanding what this plugin uses under the hood:
-
-### Floating Window (Overlay)
-
-The overlay window is implemented using **native Neovim floating window APIs** (`nvim_open_win`, `nvim_win_set_config`). It does not depend on snacks.nvim or any other UI framework. The window dimensions, positioning, borders, and layout are all calculated and managed directly by this plugin.
-
-**What this means:**
-- The overlay works with or without snacks.nvim installed
-- Window behavior is independent of your notification backend
-- You have full control over dimensions and positioning through the plugin's configuration
-
-### Notification Backend
-
-Notifications (build started/finished/failed messages) use a **fallback chain** to determine which backend to use:
-
-1. **Custom notifier** (if you provide `notifier` in `setup()`) — highest priority
-2. **snacks.notify** (if `require("snacks")` succeeds and `snacks.notify` exists)
-3. **vim.notify** (Neovim's built-in notification function) — guaranteed fallback
-
-**What this means:**
-- If snacks.nvim is installed, `snacks.notify` will be used automatically (even if you've set `enabled = false` in Snacks' own config — the function still exists)
-- To force vanilla `vim.notify` while snacks.nvim is installed, provide an explicit `notifier` table in `setup()` (see Configuration below)
-- Without snacks.nvim, the plugin works fine using `vim.notify`
-
-**Example: Force vanilla notifications**
-
-```lua
-require("snacks-vimtex-output").setup({
-  notifier = {
-    info = function(msg, opts) vim.notify(msg, vim.log.levels.INFO, opts) end,
-    warn = function(msg, opts) vim.notify(msg, vim.log.levels.WARN, opts) end,
-    error = function(msg, opts) vim.notify(msg, vim.log.levels.ERROR, opts) end,
-  },
-})
-```
-
-### Integration with VimTeX
-
-The plugin hooks into VimTeX's compiler events (`VimtexEventCompiling`, `VimtexEventCompileSuccess`, etc.) and reads the log file path from `vim.b.vimtex.compiler.output`. VimTeX is the only hard dependency; everything else is optional.
-
-## Prior Art & Scope
-
-This plugin addresses a specific gap in the Neovim LaTeX ecosystem: **a VimTeX-aware overlay for compilation output**.
-
-### What Already Exists
-
-We've surveyed the landscape of similar tools to understand where this plugin fits:
-
-**VimTeX itself** handles compilation (via latexmk), log parsing, and error navigation through quickfix/location lists. It displays output in traditional splits, not as an overlay UI. This plugin builds on VimTeX's events and APIs rather than reimplementing its compilation logic.
-
-**General terminal/job plugins** (like `toggleterm.nvim`) can display arbitrary command output in floating terminals. However, they lack VimTeX-specific integration: no automatic hooking into compilation events, no understanding of LaTeX log structure, and no awareness of VimTeX's forward search or error navigation.
-
-**Diagnostics UI plugins** (like `trouble.nvim`, `noice.nvim`) provide beautiful floating windows for LSP diagnostics, quickfix lists, and notifications. While they could theoretically display VimTeX errors if mapped to diagnostics, they aren't designed for live compilation output streaming or LaTeX-specific workflow integration.
-
-**General task runners** (like `overseer.nvim` with 1.7k stars, or `compiler.nvim` with 633 stars) manage build tasks across many languages and can display output. They're powerful for generic task management but don't provide the tight VimTeX integration or the specific overlay UX this plugin offers (compact mini mode, auto-hide on success, color-coded status borders).
-
-**snacks.nvim** itself is a UI toolkit providing notifications, popups, and other interface components. This plugin uses it only as an optional notification backend—the core overlay functionality uses native Neovim floating window APIs.
-
-### What's Missing (and Why This Plugin Exists)
-
-No existing plugin combines:
-- **VimTeX-aware integration**: Hooks into VimTeX compilation events (`VimtexEventCompiling`, `VimtexEventCompileSuccess`, etc.)
-- **Live overlay UI**: Streaming log updates in a dedicated floating window with mini/focus modes
-- **Smart auto-hide**: Automatically dismissing on successful builds to reduce clutter
-- **Status-aware presentation**: Color-coded borders and notifications reflecting build state
-
-This plugin fills that niche by providing a specialized UI layer on top of VimTeX's compilation engine, without duplicating its core functionality.
-
-## Alternatives & Comparison
-
-### VimTeX's Built-in Output Buffer
-
-VimTeX provides a stock compiler output buffer accessible via `:VimtexCompileOutput` (default keybinding `\lo`). This opens the log file in a standard Neovim buffer in a new window or split.
-
-**How this plugin differs:**
-
-| Feature | snacks-vimtex-output | VimTeX stock output |
-|---------|---------------------|-------------------|
-| **Display style** | Floating window with compact/focused modes | Traditional split/window buffer |
-| **Auto-updates** | Live streaming during compilation | Live streaming during compilation |
-| **UI integration** | Optional enhanced notifications via snacks.nvim | Messages appear in `:messages` |
-| **Auto-hide** | Automatically hides on successful builds (configurable) | Stays open until manually closed |
-| **Visual feedback** | Color-coded borders (green for success, red for errors) | Standard buffer appearance |
-| **Workspace impact** | Overlays workspace (may cover content) | Creates/reuses split (changes layout) |
-| **Buffer type** | Read-only scratch buffer | Standard buffer in the buffer list |
-
-**When to use this plugin:**
-
-- You prefer floating window UIs that minimize layout changes
-- You appreciate visual status indicators (border colors, notifications)
-- You want automatic cleanup (hide on success) to reduce clutter
-
-**When to stick with VimTeX's built-in output:**
-
-- You prefer traditional buffer-based workflows
-- You want the output to persist in a predictable window/split location
-- You don't want additional plugin dependencies
-- You prefer complete control over when the output appears and disappears
-- You want the buffer in your buffer list for standard navigation
-
-Both approaches are valid; this plugin complements VimTeX rather than replacing its output functionality.
+- **General runner** – `require("output-panel").run()` executes any shell
+  command asynchronously, streams live output, colours the border based on exit
+  status, and fires notifications.
+- **Profiles & overrides** – Define reusable configuration profiles and apply
+  them per command so each workflow can tweak window geometry, notification
+  titles, auto-hide timing, etc.
+- **Notifier fallback chain** – Works out of the box with `vim.notify`, happily
+  upgrades to `snacks.notify` when available, and accepts any custom notifier you
+  want to plug in.
+- **VimTeX aware** – Ships the original auto-open, auto-hide, and command suite
+  for `latexmk` logs, now powered by the same configurable panel.
+- **Knit helper** – `require("knit.run")` is a zero-dependency runner that
+  hooks into the panel only when you opt-in to live output.
 
 ## Installation
 
@@ -118,83 +39,126 @@ Both approaches are valid; this plugin complements VimTeX rather than replacing 
 
 ```lua
 {
-  "krissen/snacks-vimtex-output",
-  dependencies = { "lervag/vimtex" },
-  -- Optional: Add "folke/snacks.nvim" to dependencies for enhanced notifications
-  ft = "tex",
+  "krissen/output-panel.nvim",
+  dependencies = {
+    -- Optional, but recommended for LaTeX workflows
+    "lervag/vimtex",
+    -- Optional notifications/popup helpers
+    "folke/snacks.nvim",
+  },
   config = function()
-    require("snacks-vimtex-output").setup({
-      -- optional overrides; see below for the full list
-      mini = {
-        width_scale = 0.75,
-      },
+    require("output-panel").setup({
+      -- global options go here; see below for the full list
     })
   end,
 }
 ```
 
-### packer.nvim
-
-```lua
-use({
-  "krissen/snacks-vimtex-output",
-  requires = { "lervag/vimtex" },
-  -- Optional: Add "folke/snacks.nvim" for enhanced notifications
-  config = function()
-    require("snacks-vimtex-output").setup()
-  end,
-})
-```
-
-**Note:** The plugin automatically detects and uses snacks.nvim if it's installed. If you want to use a different notification backend (such as `noice.nvim` or a custom callback), or if you want to force vanilla `vim.notify` despite having snacks.nvim installed, provide a `notifier` table with `info`, `warn`, and `error` functions via the `notifier` option in setup (see Architecture & Backend and Configuration sections).
+> Existing configs that still `require("snacks-vimtex-output")` continue to
+> work via a compatibility shim, but new setups should switch to
+> `require("output-panel")`.
 
 ## Usage
 
-Run `require("snacks-vimtex-output").setup()` once (e.g., inside your plugin manager config).
+### Running arbitrary commands
 
-### Default behavior
-
-- After installation nothing pops up automatically—the plugin waits for you to call one of its helpers or commands.
-- Once opened, the overlay attaches to the current VimTeX build, streams log updates live, and hides on success (if `auto_hide.enabled` is true). You can close it mid-build and reopen it later; the stream resumes immediately.
-- Failed builds stay visible until you close them so you can read the error trace.
-- Notifications mirror each build status without any additional configuration. Failure popups stay pinned (by default) so you can revisit the log, but a later success automatically replaces the old error.
-- The overlay is read-only; hiding or reopening it never pauses or stops VimTeX builds.
-- Want the overlay to appear the moment a compile starts? Set `auto_open.enabled = true` to opt in to the automatic window. The plugin listens to both `VimtexEventCompileStarted` and `VimtexEventCompiling`, so continuous latexmk rebuilds triggered by buffer writes reopen the overlay as well.
-
-### Manual control
-
-The module exposes helpers you may call directly if you want to wire custom logic:
+Call `run()` with the command you want to execute. Output streams into the
+panel, and notifications summarise the exit status.
 
 ```lua
-local vimtex_output = require("snacks-vimtex-output")
-vimtex_output.show()
-vimtex_output.hide()
-vimtex_output.toggle()
-vimtex_output.toggle_focus()
+local panel = require("output-panel")
+
+-- Knit the current RMarkdown file using Rscript
+vim.keymap.set("n", "<leader>rk", function()
+  panel.run({
+    cmd = { "Rscript", "bifrost__knit.R", "-r", vim.fn.expand("%") },
+    profile = "knit", -- optional profile defined in setup()
+    success = "Document knitted",
+    error = "Knitting failed",
+    start = "Knitting…",
+  })
+end, { desc = "Knit document" })
 ```
 
-### Commands
+Key behaviours:
+
+- `cmd` accepts a string, list, or function returning either. Strings run inside
+  `sh -c` (or `cmd.exe /c` on Windows).
+- Notifications inherit their title/timeouts from the active profile. Provide
+  `success`/`error` strings for custom labels.
+- Set `open = false` to keep the panel hidden until you manually call
+  `require("output-panel").show()`.
+- Each run gets its own temporary log file, so you can revisit the output even
+  after the command completes.
+
+### Knit helper
+
+`lua/knit/run.lua` ships a lightweight wrapper for RMarkdown/Quarto workflows.
+It mirrors the `run()` API but defaults to plain notifications unless you set
+`output_panel`/`live_output = true`, in which case it proxies to the panel.
+
+```lua
+local knit_run = require("knit.run")
+
+vim.keymap.set("n", "<leader>rk", function()
+  knit_run.run({
+    cmd = { "Rscript", "bifrost__knit.R", "-r", vim.fn.expand("%") },
+    title = "Knit document",
+    success = "Document knitted",
+    error = "Knitting failed",
+    output_panel = true, -- live stream via output-panel.nvim
+    panel = {
+      profile = "knit",
+      focus = false,
+    },
+  })
+end, { desc = "Knit document" })
+```
+
+Without `output_panel` it simply routes notifications through the usual fallback
+chain (Snacks first if installed, otherwise `vim.notify`) while still respecting
+the provided titles/timeouts. Use the `panel` table to
+adjust the window when live streaming (e.g. set a dedicated profile, tweak
+layout, or disable `notify_start`).
+
+### VimTeX integration
+
+Install VimTeX, call `setup()`, and the panel automatically follows
+`VimtexEventCompiling`, `VimtexEventCompileSuccess`, etc. The legacy commands are
+still available:
 
 | Command | Description |
 | --- | --- |
-| `:VimtexOutputShow` | Show the overlay. |
-| `:VimtexOutputHide` | Close the overlay. |
+| `:VimtexOutputShow` | Open the panel for the active VimTeX buffer. |
+| `:VimtexOutputHide` | Close the panel. |
 | `:VimtexOutputToggle` | Toggle visibility. |
-| `:VimtexOutputToggleFocus` | Switch between the compact and focused layouts. |
+| `:VimtexOutputToggleFocus` | Switch between mini/focus layouts. |
+| `:VimtexOutputToggleFollow` | Toggle follow/tail mode. |
 
-The plugin intentionally leaves keymaps up to you. A simple example:
+The overlay attaches to VimTeX's compiler log (usually the `latexmk` stdout
+buffer) and retains all prior behaviours—auto-open on compilation, optional
+auto-hide on success, green/red borders, and persistent error notifications.
+
+### API helpers
 
 ```lua
-vim.keymap.set("n", "<leader>lo", ":VimtexOutputToggle<CR>", { silent = true })
-vim.keymap.set("n", "<leader>lO", ":VimtexOutputToggleFocus<CR>", { silent = true })
+local panel = require("output-panel")
+panel.show()          -- open panel for the current target
+panel.hide()          -- hide panel
+panel.toggle()        -- toggle visibility
+panel.toggle_follow() -- toggle follow/tail mode
+panel.toggle_focus()  -- swap between mini/focus layouts
+panel.run({...})      -- run arbitrary commands (see above)
 ```
 
 ## Configuration
 
-`setup()` accepts a table that is deeply merged with the defaults below.
+`setup()` merges your overrides with the defaults below. Profiles are deep
+merged, so you can inherit global values and tweak only what each workflow
+needs.
 
 ```lua
-require("snacks-vimtex-output").setup({
+require("output-panel").setup({
   mini = {
     width_scale = 0.90,
     width_min = 48,
@@ -219,144 +183,181 @@ require("snacks-vimtex-output").setup({
     horizontal_align = 0.5,
     col_offset = 0,
   },
-  scrolloff_margin = 5, -- extra cursor padding while the mini overlay is visible
-  border_highlight = "FloatBorder", -- default window border highlight group
+  scrolloff_margin = 5,
+  border_highlight = "FloatBorder",
   auto_open = {
-    enabled = false, -- set to true to automatically pop open the overlay when VimTeX starts compiling
-    retries = 6, -- how many times to retry opening while latexmk creates the log file or restarts
-    delay = 150, -- milliseconds between retries
+    enabled = false,
+    retries = 6,
+    delay = 150,
   },
   auto_hide = {
     enabled = true,
-    delay = 3000, -- milliseconds before hiding after a successful build
+    delay = 3000,
   },
   notifications = {
     enabled = true,
-    title = "VimTeX", -- label injected into notification popups
-    persist_failure = true, -- keep the most recent failure notification visible until a success replaces it
+    title = "VimTeX",
+    persist_failure = true,
   },
-  notifier = nil, -- custom notification backend (see "Notification Backends" below)
-})
-```
-
-### Notification Backends
-
-By default, the plugin uses an **automatic fallback chain** for notifications:
-
-1. If you provide a custom `notifier` table in `setup()`, it's used
-2. Otherwise, if `snacks.notify` is available, it's used
-3. Otherwise, `vim.notify` is used as the final fallback
-
-**To use a custom notification backend**, provide a `notifier` table with three functions:
-
-```lua
-require("snacks-vimtex-output").setup({
-  notifier = {
-    info = function(msg, opts)
-      -- Your custom info notification
-      -- opts.title is always set to config.notifications.title (default "VimTeX")
-      vim.notify(msg, vim.log.levels.INFO, opts)
-    end,
-    warn = function(msg, opts)
-      -- Your custom warning notification
-      vim.notify(msg, vim.log.levels.WARN, opts)
-    end,
-    error = function(msg, opts)
-      -- Your custom error notification
-      -- opts.timeout and opts.keep may be set for persistent failure notifications
-      vim.notify(msg, vim.log.levels.ERROR, opts)
-    end,
+  follow = {
+    enabled = true,
+  },
+  max_lines = 4000,
+  open_on_error = true,
+  notifier = nil,
+  profiles = {
+    knit = {
+      notifications = { title = "Knit" },
+      auto_hide = { enabled = false },
+    },
   },
 })
 ```
 
-**Common use cases:**
+`follow.enabled` keeps the panel in tail/follow mode whenever it's opened.
+Toggle it ad-hoc via `:VimtexOutputToggleFollow` (or
+`require("output-panel").toggle_follow()`). `max_lines` trims the scratch buffer
+so very chatty commands never retain more than the configured line count, and
+`open_on_error` makes failures pop the panel even if live output was disabled
+while the job ran.
 
-- **Force vanilla `vim.notify`** even when snacks.nvim is installed (see example in Architecture & Backend section above)
-- **Integrate with noice.nvim** or another notification plugin
-- **Custom logging** or notification routing (e.g., send build failures to a separate window or file)
+### Profiles
+
+Profiles are arbitrary tables merged into the active configuration whenever you
+call `run({ profile = "name" })`. Use them to change the notification title,
+auto-hide behaviour, or window layout for a specific workflow without touching
+other commands.
+
+You can also bypass profiles and pass `config = { ... }` directly to `run()` for
+one-off overrides.
+
+### Notification backends
+
+Notifications follow a fallback chain:
+
+1. Custom notifier provided via `setup({ notifier = { info=…, warn=…, error=… } })`
+2. `snacks.notify` (if Snacks is installed and exposes it)
+3. `vim.notify`
+
+This applies everywhere—VimTeX events and manual command runs.
 
 ### Tips
 
-- Increase `mini.height_ratio` if your TeX toolchain is especially chatty.
-- Raise `mini.row_offset` (default 5) if you use a tall statusline and need extra breathing room above it.
-- Set `notifications.persist_failure = false` if you prefer failure popups to fade like the rest of your notifications.
-- Set `auto_hide.enabled = false` to keep successful builds on screen until you close them.
-- Provide a `notifier` table if you want to integrate with another notification framework or force vanilla `vim.notify`.
-- All helpers live on the module table, so you can call them from custom commands or statuslines.
+- Increase `mini.height_ratio` or `mini.height_max` if your commands are chatty.
+- Bump `scrolloff_margin` if the mini panel covers your cursor.
+- Set `auto_open.enabled = true` to auto-pop the panel whenever VimTeX begins
+  compiling.
+- Disable `auto_hide` globally or per profile if you want successful runs to
+  stay visible.
+- Toggle follow mode with `:VimtexOutputToggleFollow` before scrolling through
+  older log lines.
+- Lower `max_lines` if you're running extremely verbose scripts and want to keep
+  the scratch buffer tighter.
+- Assign `notifier` to integrate with `noice.nvim`, `rcarriga/nvim-notify`, or
+  any custom logger.
 
 ## Troubleshooting
 
-### The overlay doesn't appear when compilation starts
+- **Nothing shows up when running a command** – Ensure you're on Neovim 0.8+
+  and that the command exists in your `$PATH`. The panel writes every chunk to a
+  temp file; open it via `:edit {path}` to inspect raw output.
+- **VimTeX overlay never opens** – Set `auto_open.enabled = true` or run one of
+  the `:VimtexOutput*` commands manually. Verify `vim.b.vimtex.compiler.output`
+  is populated in your TeX buffer.
+- **Notifications missing** – Confirm `notifications.enabled = true` and that
+  your custom notifier isn't erroring. The plugin logs failures inside the panel.
+- **Want different layouts per workflow** – Define multiple profiles and pass
+  `profile = "name"` when calling `run()`.
 
-**Possible causes:**
+## Why keep the VimTeX docs?
 
-1. **Auto-open is disabled** (default behavior). The overlay only opens automatically if you set `auto_open.enabled = true` in your config. Otherwise, you need to manually trigger it with `:VimtexOutputToggle` or `require("snacks-vimtex-output").show()`.
+The project started as *snacks-vimtex-output*, and the LaTeX workflow remains a
+first-class citizen. VimTeX already streams compiler logs to splits, but the
+panel provides:
 
-2. **VimTeX is not properly initialized**. Ensure VimTeX is loaded and configured correctly. Check that `vim.b.vimtex` exists in your TeX buffer.
+| Feature | Panel | VimTeX stock output |
+| --- | --- | --- |
+| Display | Floating mini/focus overlay | Regular splits |
+| Auto-hide | Yes (configurable) | No |
+| Visual status | Border colours + notifications | Messages only |
+| Buffer type | Scratch, hidden by default | Normal buffer |
 
-3. **Log file doesn't exist yet**. The plugin needs VimTeX's compiler output file. If auto-open is enabled but the overlay doesn't appear, try increasing `auto_open.retries` or `auto_open.delay` to give latexmk more time to create the log file.
+Use whichever suits your workflow—the panel simply adds a custom floating skin
+on top of VimTeX's reliable compilation backend while now powering any other
+command you want to monitor.
 
-### The overlay appears but shows no content
+## How does this compare to other plugins?
 
-**Possible causes:**
+Neovim already offers several ways to run commands asynchronously. The panel
+deliberately fills the gap between a full task manager and raw quickfix output.
+In particular, [Overseer.nvim](https://github.com/stevearc/overseer.nvim) should
+be your first stop whenever you want templated builds, task registries, file
+watchers, or an interactive dashboard. Reach for output-panel.nvim when you only
+need a single command (or VimTeX) log visible in the background with minimal
+setup and no extra UI to manage.
 
-1. **Log file is empty or being recreated**. VimTeX sometimes recreates the log file during compilation. The plugin's polling mechanism should pick up changes, but you can manually refresh by hiding and showing again.
+### Overseer.nvim
 
-2. **Permissions issue**. Ensure Neovim has read access to the compiler output file (typically a `.log` file in your project directory).
+[Overseer](https://github.com/stevearc/overseer.nvim) is the closest feature
+match: it manages a registry of tasks, templates, diagnostics integration, and
+per-task metadata while exposing quick actions (rerun, stop, restart, watch on
+save) and a toggleable dashboard (`:OverseerToggle`) that lists every job. That
+power comes at the cost of additional configuration (`use_terminal`, component
+pipelines, task bundles, recommended dependencies like `plenary.nvim` and
+`nvim-notify`, etc.) and a larger UI footprint. If you want that level of
+control—multiple concurrent builds, VS Code-style task definitions, or a central
+place to inspect historical runs—Overseer is absolutely the better fit.
 
-3. **Wrong file path**. The plugin reads from `vim.b.vimtex.compiler.output`. If VimTeX is configured with a custom output directory, ensure it's correctly set.
+output-panel.nvim intentionally stops earlier: no task list, no history, just a
+single scratch buffer that auto-opens on failure/success and can be wired
+directly to VimTeX hooks or ad-hoc shell commands. It excels when you prefer to
+trigger commands via existing mappings (`:VimtexCompile`, custom keymaps, save
+autocmds) and simply want to watch stdout scroll in a compact overlay without
+learning a new task abstraction. Overseer can be configured to behave similarly,
+but doing so typically requires authoring task definitions and tweaking layout
+settings—effort that outweighs the benefit when you only need a “fire-and-forget”
+pane.
 
-### Notifications aren't showing
+### ToggleTerm and generic terminals
 
-**Possible causes:**
+[toggleterm.nvim](https://github.com/akinsho/toggleterm.nvim) (and plain
+`:terminal`) provide real shells. They shine when you want an interactive REPL
+or when a command expects input, but that also means the buffer is stateful: you
+can accidentally send keystrokes to the shell, scrollback is persistent across
+runs, and you have to manually reset the prompt. The output panel is a
+read-only, auto-trimmed buffer that is recreated for every run, so it behaves
+more like an IDE build pane than a terminal emulator.
 
-1. **Notifications are disabled**. Check that `notifications.enabled` is not explicitly set to `false`.
+### Quickfix/location list (asyncrun.vim, vim-dispatch)
 
-2. **No notification backend available**. Ensure your Neovim version supports the notify API (0.5+). The plugin falls back to `vim.notify` if snacks.nvim is unavailable.
+Plugins such as [asyncrun.vim](https://github.com/skywind3000/asyncrun.vim) and
+[vim-dispatch](https://github.com/tpope/vim-dispatch) stream output into the
+quickfix list. That is perfect when you want structured error navigation, but it
+comes with trade-offs: multi-line logs are flattened into entries, colouring and
+formatting are lost, and you can easily clobber the quickfix list that LSP or
+other commands rely on. The output panel sidesteps those issues by maintaining a
+separate scratch buffer with optional syntax highlighting while still sending
+success/failure notifications like dispatch.
 
-3. **Custom notifier is misconfigured**. If you provided a `notifier` table, ensure it has `info`, `warn`, and `error` functions that are working correctly.
+### Trouble.nvim and diagnostics explorers
 
-### The overlay hides too quickly after successful builds
+[Trouble.nvim](https://github.com/folke/trouble.nvim) and similar explorers
+excel at visualising diagnostics, references, and quickfix/location lists. They
+are intentionally opinionated about structure (severity grouping, jump lists,
+filters), whereas the panel intentionally avoids parsing. Use Trouble when you
+want to triage issues; use the panel when you want the raw log for debugging.
 
-Increase the `auto_hide.delay` value (default is 3000ms):
+### Noice.nvim and notification UIs
 
-```lua
-require("snacks-vimtex-output").setup({
-  auto_hide = {
-    delay = 5000, -- wait 5 seconds before hiding
-  },
-})
-```
-
-Or disable auto-hide entirely:
-
-```lua
-require("snacks-vimtex-output").setup({
-  auto_hide = {
-    enabled = false,
-  },
-})
-```
-
-### The floating window covers my cursor
-
-The plugin automatically increases `scrolloff` to prevent the overlay from covering the cursor in mini (unfocused) mode. If this isn't working, try increasing `scrolloff_margin`:
-
-```lua
-require("snacks-vimtex-output").setup({
-  scrolloff_margin = 10, -- increase padding above the cursor
-})
-```
-
-### I want to customize the window dimensions
-
-All dimension parameters are configurable. See the Configuration section for the full list. Common adjustments:
-
-- **Wider overlay**: Increase `mini.width_scale` or `mini.width_max`
-- **Taller overlay**: Increase `mini.height_ratio` or `mini.height_max`
-- **Reposition overlay**: Adjust `row_anchor`, `row_offset`, `horizontal_align`, `col_offset`
+[Noice](https://github.com/folke/noice.nvim) re-skins Neovim’s messages and can
+proxy `vim.notify`, so it compliments output-panel.nvim by rendering the panel’s
+completion notifications. It does not, however, provide an output buffer or task
+runner. If you already run Noice, the panel’s notifier fallback (Snacks first if
+present, otherwise `vim.notify`) means your completion alerts flow through Noice
+without any special setup.
 
 ## Development
 
-Formatting is enforced through [StyLua](https://github.com/JohnnyMorganz/StyLua). Run `stylua lua/` before committing.
+- Format with `stylua lua/`.
+- Run different commands/profiles manually to test notification paths.
+- Verify behaviour with and without Snacks and VimTeX loaded.

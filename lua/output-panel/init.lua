@@ -101,6 +101,21 @@ local state = {
   job = nil,
 }
 
+-- Return replacement opts when a persistent failure notification exists so the
+-- next info/success message can dismiss the stale error toast.
+local function with_failure_replace(opts)
+  if not state.failure_notification then
+    return opts
+  end
+  if opts then
+    opts.replace = state.failure_notification
+  else
+    opts = { replace = state.failure_notification }
+  end
+  state.failure_notification = nil
+  return opts
+end
+
 local function current_config()
   return state.active_config or config
 end
@@ -908,7 +923,7 @@ function M.run(opts)
 
   if opts.notify_start ~= false then
     local start_message = opts.start or opts.start_message or (job_title .. " started…")
-    notify("info", start_message)
+    notify("info", start_message, with_failure_replace())
   end
 
   -- Append a chunk to both the on-disk log and an in-memory accumulator for notifications.
@@ -974,8 +989,11 @@ function M.run(opts)
       if window_exists then
         schedule_hide(cfg.auto_hide and cfg.auto_hide.delay)
       end
-      notify("info", (opts.success or (job_title .. " finished")) .. format_duration_suffix())
-      state.failure_notification = nil
+      notify(
+        "info",
+        (opts.success or (job_title .. " finished")) .. format_duration_suffix(),
+        with_failure_replace()
+      )
     else
       state.status = "failure"
       state.border_hl = "DiagnosticError"
@@ -1108,7 +1126,7 @@ local function on_compile_started(event)
     })
   end
   if not state.running_notified then
-    notify("info", "LaTeX build started…")
+    notify("info", "LaTeX build started…", with_failure_replace())
     state.running_notified = true
   end
 end
@@ -1139,12 +1157,7 @@ local function on_compile_succeeded(event)
     schedule_hide(cfg.auto_hide and cfg.auto_hide.delay)
   end
   -- Replace previous failure notification if one exists
-  local notify_opts
-  if state.failure_notification then
-    notify_opts = { replace = state.failure_notification }
-  end
-  notify("info", "LaTeX build finished" .. format_duration_suffix(), notify_opts)
-  state.failure_notification = nil
+  notify("info", "LaTeX build finished" .. format_duration_suffix(), with_failure_replace())
 end
 
 -- Handle VimTeX compilation failure event (VimtexEventCompileFailed).

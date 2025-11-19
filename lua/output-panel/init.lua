@@ -214,15 +214,21 @@ local function with_failure_replace(opts, scope)
   end
   local replace = notification_replace_token(entry)
   if replace ~= nil then
+    -- Backends that support replacement keep their own history, so avoid a
+    -- manual dismissal to preserve the toast in Snacks' notifier history.
     if opts then
       opts.replace = replace
     else
       opts = { replace = replace }
     end
-  elseif not opts then
-    opts = {}
+  else
+    -- Fall back to an explicit dismissal when the backend lacks replace
+    -- semantics so stale errors still disappear immediately.
+    dismiss_notification_entry(entry)
+    if not opts then
+      opts = {}
+    end
   end
-  dismiss_notification_entry(entry)
   state.failure_notifications[scope] = nil
   return opts
 end
@@ -238,9 +244,14 @@ local function failure_notification_options(notifications, scope)
   if entry then
     local replace = notification_replace_token(entry)
     if replace ~= nil then
+      -- Preserve notifier history when a backend provides a replace token by
+      -- letting it handle the swap internally.
       failure_opts.replace = replace
+    else
+      -- Without replacement support we still dismiss manually so old failures
+      -- never linger.
+      dismiss_notification_entry(entry)
     end
-    dismiss_notification_entry(entry)
     state.failure_notifications[scope] = nil
   end
   local persist = notifications and notifications.persist_failure

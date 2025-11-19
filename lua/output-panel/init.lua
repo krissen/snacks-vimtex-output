@@ -102,7 +102,7 @@ local state = {
   last_close_reason = nil,
   augroup = nil,
   notify = nil,
-  failure_notification = nil,
+  failure_notifications = {},
   running_notified = false,
   active_config = nil,
   job = nil,
@@ -144,30 +144,64 @@ local function dismiss_notification_handle(handle)
   end
 end
 
--- Return the raw notification handle saved for the last failure toast.
-local function failure_notification_handle()
-  if state.failure_notification then
-    return state.failure_notification.handle
+-- Return the saved failure notification entry for a given scope so callers can
+-- inspect and dismiss only the relevant toast without touching other builds.
+local function failure_notification_entry(scope)
+  if not scope then
+    return nil
+  end
+  return state.failure_notifications[scope]
+end
+
+local function failure_notification_handle(scope)
+  local entry = failure_notification_entry(scope)
+  if entry then
+    return entry.handle
   end
   return nil
 end
 
--- Return replacement opts when a persistent failure notification exists so the
--- next info/success message can dismiss the stale error toast. We also
+-- Generate a scoped key to associate notifications with either command jobs or
+-- VimTeX builds so unrelated events never clear each other's status toasts.
+local function failure_scope_key(kind, identifier)
+  if identifier and identifier ~= "" then
+    return string.format("%s:%s", kind, identifier)
+  end
+  return kind
+end
+
+-- Capture the active command job scope using its user-facing title so reruns of
+-- the same workflow share a consistent identifier regardless of temp files.
+local function command_failure_scope(job)
+  if not job then
+    return failure_scope_key("command", "unknown")
+  end
+  return failure_scope_key("command", job.title or job.window_title or "unknown")
+end
+
+-- Capture the VimTeX build scope via the compiler output path so consecutive
+-- builds for the same project share a consistent identifier.
+local function vimtex_failure_scope(target)
+  return failure_scope_key("vimtex", target or state.target or "vimtex")
+end
+
+-- Return replacement opts when a persistent failure notification exists for the
+-- supplied scope so only related events dismiss stale errors. We also
 -- immediately dismiss the previous failure to guarantee the UI clears even if
 -- the backend does not respect the replace handle.
-local function with_failure_replace(opts)
-  if not state.failure_notification then
+local function with_failure_replace(opts, scope)
+  local entry = failure_notification_entry(scope)
+  if not entry then
     return opts
   end
-  local handle = failure_notification_handle()
+  local handle = entry.handle
   if opts then
     opts.replace = handle
   else
     opts = { replace = handle }
   end
   dismiss_notification_handle(handle)
-  state.failure_notification = nil
+  state.failure_notifications[scope] = nil
   return opts
 end
 
@@ -176,8 +210,14 @@ end
 -- requested duration. Snacks' notifier expects `keep` to be a callback, so we
 -- only rely on timeout semantics that both snacks.nvim and vim.notify support
 -- to avoid type mismatches.
-local function failure_notification_options(notifications)
-  local failure_opts = { replace = failure_notification_handle() }
+local function failure_notification_options(notifications, scope)
+  local failure_opts = {}
+  local handle = failure_notification_handle(scope)
+  if handle then
+    failure_opts.replace = handle
+    dismiss_notification_handle(handle)
+    state.failure_notifications[scope] = nil
+  end
   local persist = notifications and notifications.persist_failure
   if persist == nil then
     persist = default_config.notifications.persist_failure
@@ -1016,7 +1056,7 @@ function M.run(opts)
 
   if opts.notify_start ~= false then
     local start_message = opts.start or opts.start_message or (job_title .. " started…")
-    notify("info", start_message, with_failure_replace())
+    notify("info", start_message, with_failure_replace(nil, command_failure_scope(state.job)))
   end
 
   -- Append a chunk to both the on-disk log and an in-memory accumulator for notifications.
@@ -1085,7 +1125,7 @@ function M.run(opts)
       notify(
         "info",
         (opts.success or (job_title .. " finished")) .. format_duration_suffix(),
-        with_failure_replace()
+        with_failure_replace(nil, command_failure_scope(state.job))
       )
     else
       state.status = "failure"
@@ -1095,10 +1135,12 @@ function M.run(opts)
         render_window({ target = log_path, focus = state.focused, border_hl = state.border_hl })
       end
       local notifications = cfg.notifications or {}
-      local failure_opts = failure_notification_options(notifications)
+      local failure_scope = command_failure_scope(state.job)
+      local failure_opts = failure_notification_options(notifications, failure_scope)
       local failure_message = opts.error or (job_title .. " failed")
-      state.failure_notification = {
+      state.failure_notifications[failure_scope] = {
         handle = notify("error", failure_message .. format_duration_suffix(), failure_opts),
+        scope = failure_scope,
       }
     end
     if opts.on_exit then
@@ -1193,6 +1235,7 @@ local function on_compile_started(event)
   state.job = nil
   local cfg = current_config()
   local ctx = event_context(event)
+  local failure_scope = vimtex_failure_scope(ctx.target)
   local already_running = state.status == "running"
   -- Only reset timer on the first compile event (not subsequent recompiles)
   if not already_running then
@@ -1216,7 +1259,7 @@ local function on_compile_started(event)
     })
   end
   if not state.running_notified then
-    notify("info", "LaTeX build started…", with_failure_replace())
+    notify("info", "LaTeX build started…", with_failure_replace(nil, failure_scope))
     state.running_notified = true
   end
 end
@@ -1230,6 +1273,7 @@ local function on_compile_succeeded(event)
   end
   local cfg = current_config()
   local ctx = event_context(event)
+  local failure_scope = vimtex_failure_scope(ctx.target)
   local elapsed = elapsed_seconds()
   state.elapsed = elapsed
   state.started_at = nil
@@ -1247,7 +1291,7 @@ local function on_compile_succeeded(event)
     schedule_hide(cfg.auto_hide and cfg.auto_hide.delay)
   end
   -- Replace previous failure notification if one exists
-  notify("info", "LaTeX build finished" .. format_duration_suffix(), with_failure_replace())
+  notify("info", "LaTeX build finished" .. format_duration_suffix(), with_failure_replace(nil, failure_scope))
 end
 
 -- Handle VimTeX compilation failure event (VimtexEventCompileFailed).
@@ -1277,9 +1321,11 @@ local function on_compile_failed(event)
   end
   -- Show persistent failure notification (if configured) so it stays visible until next success
   local notifications = cfg.notifications or {}
-  local failure_opts = failure_notification_options(notifications)
-  state.failure_notification = {
+  local failure_scope = vimtex_failure_scope(ctx.target)
+  local failure_opts = failure_notification_options(notifications, failure_scope)
+  state.failure_notifications[failure_scope] = {
     handle = notify("error", "LaTeX build failed" .. format_duration_suffix(), failure_opts),
+    scope = failure_scope,
   }
 end
 
@@ -1356,7 +1402,7 @@ function M.setup(opts)
   assign_config(merged)
   set_active_config(nil)
   state.border_hl = current_config().border_highlight or "FloatBorder"
-  state.failure_notification = nil
+  state.failure_notifications = {}
   state.running_notified = false
   setup_autocmds()
   setup_commands()

@@ -27,25 +27,25 @@ end
 function M.resolve_notifier()
   local notify = {
     info = function(msg, opts)
-      vim.notify(msg, vim.log.levels.INFO, opts)
+      return vim.notify(msg, vim.log.levels.INFO, opts)
     end,
     warn = function(msg, opts)
-      vim.notify(msg, vim.log.levels.WARN, opts)
+      return vim.notify(msg, vim.log.levels.WARN, opts)
     end,
     error = function(msg, opts)
-      vim.notify(msg, vim.log.levels.ERROR, opts)
+      return vim.notify(msg, vim.log.levels.ERROR, opts)
     end,
   }
   local ok, snacks = pcall(require, "snacks")
   if ok and snacks.notify then
     notify.info = function(msg, opts)
-      snacks.notify.info(msg, opts)
+      return snacks.notify.info(msg, opts)
     end
     notify.warn = function(msg, opts)
-      snacks.notify.warn(msg, opts)
+      return snacks.notify.warn(msg, opts)
     end
     notify.error = function(msg, opts)
-      snacks.notify.error(msg, opts)
+      return snacks.notify.error(msg, opts)
     end
   end
   return notify

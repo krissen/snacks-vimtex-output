@@ -225,8 +225,9 @@ sticky errors, `0`, `-1`, or `true` to keep them indefinitely, and positive
 numbers for the number of seconds (45 by default) before dismissing the toast.
 Failure notifications are scoped per build/command, so rerunning the same job,
 letting a watcher (like VimTeX's continuous `latexmk`) kick off another cycle,
-or simply finishing successfully immediately clears the stale error while
-unrelated tasks keep their own history.
+or simply finishing successfully immediately clears the stale error. Clearing a
+toast never prunes Snacks' history viewer, so you can still audit prior errors
+while unrelated tasks keep their own entries.
 Toggle it ad-hoc via `:VimtexOutputToggleFollow` (or
 `require("output-panel").toggle_follow()`). `max_lines` trims the scratch buffer
 so very chatty commands never retain more than the configured line count, and

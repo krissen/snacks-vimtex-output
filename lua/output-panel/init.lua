@@ -108,25 +108,6 @@ local state = {
   job = nil,
 }
 
--- Convert a notifier entry into a token suitable for `replace`. Snacks expects
--- an integer ID while other backends may return a table carrying the `id`
--- field. When no identifier exists, callers simply skip the replacement field.
-local function notification_replace_token(entry)
-  if not entry then
-    return nil
-  end
-  local handle = entry.handle
-  if type(handle) == "table" then
-    if handle.id ~= nil then
-      return handle.id
-    end
-    if handle.handle ~= nil then
-      return handle.handle
-    end
-  end
-  return handle
-end
-
 -- Attempt to dismiss a previously shown notification entry regardless of the
 -- backend. Prefers any backend-provided `hide` callback, then falls back to
 -- conventional handle methods and finally to `vim.notify.dismiss`.
@@ -203,34 +184,16 @@ local function vimtex_failure_scope(target)
   return failure_scope_key("vimtex", target or state.target or "vimtex")
 end
 
--- Return replacement opts when a persistent failure notification exists for the
--- supplied scope so only related events dismiss stale errors. We also
--- immediately dismiss the previous failure to guarantee the UI clears even if
--- the backend does not respect the replace handle.
-local function with_failure_replace(opts, scope)
+-- Clear the persistent failure notification for a scope so reruns or success
+-- updates stop showing stale errors without disturbing notifier history.
+local function clear_failure_notification(scope)
   local entry = failure_notification_entry(scope)
   if not entry then
-    return opts
+    return false
   end
-  local replace = notification_replace_token(entry)
-  if replace ~= nil then
-    -- Backends that support replacement keep their own history, so avoid a
-    -- manual dismissal to preserve the toast in Snacks' notifier history.
-    if opts then
-      opts.replace = replace
-    else
-      opts = { replace = replace }
-    end
-  else
-    -- Fall back to an explicit dismissal when the backend lacks replace
-    -- semantics so stale errors still disappear immediately.
-    dismiss_notification_entry(entry)
-    if not opts then
-      opts = {}
-    end
-  end
+  dismiss_notification_entry(entry)
   state.failure_notifications[scope] = nil
-  return opts
+  return true
 end
 
 -- Interpret persist_failure config values (-1/0/true for indefinite persistence,
@@ -242,16 +205,9 @@ local function failure_notification_options(notifications, scope)
   local failure_opts = {}
   local entry = failure_notification_entry(scope)
   if entry then
-    local replace = notification_replace_token(entry)
-    if replace ~= nil then
-      -- Preserve notifier history when a backend provides a replace token by
-      -- letting it handle the swap internally.
-      failure_opts.replace = replace
-    else
-      -- Without replacement support we still dismiss manually so old failures
-      -- never linger.
-      dismiss_notification_entry(entry)
-    end
+    -- Dismiss the previous failure immediately so only the most recent toast is
+    -- visible while still leaving a breadcrumb inside Snacks' history views.
+    dismiss_notification_entry(entry)
     state.failure_notifications[scope] = nil
   end
   local persist = notifications and notifications.persist_failure
@@ -1102,7 +1058,8 @@ function M.run(opts)
 
   if opts.notify_start ~= false then
     local start_message = opts.start or opts.start_message or (job_title .. " started…")
-    notify("info", start_message, with_failure_replace(nil, command_failure_scope(state.job)))
+    clear_failure_notification(command_failure_scope(state.job))
+    notify("info", start_message)
   end
 
   -- Append a chunk to both the on-disk log and an in-memory accumulator for notifications.
@@ -1168,10 +1125,10 @@ function M.run(opts)
       if window_exists then
         schedule_hide(cfg.auto_hide and cfg.auto_hide.delay)
       end
+      clear_failure_notification(command_failure_scope(state.job))
       notify(
         "info",
-        (opts.success or (job_title .. " finished")) .. format_duration_suffix(),
-        with_failure_replace(nil, command_failure_scope(state.job))
+        (opts.success or (job_title .. " finished")) .. format_duration_suffix()
       )
     else
       state.status = "failure"
@@ -1307,7 +1264,8 @@ local function on_compile_started(event)
     })
   end
   if not state.running_notified then
-    notify("info", "LaTeX build started…", with_failure_replace(nil, failure_scope))
+    clear_failure_notification(failure_scope)
+    notify("info", "LaTeX build started…")
     state.running_notified = true
   end
 end
@@ -1339,11 +1297,8 @@ local function on_compile_succeeded(event)
     schedule_hide(cfg.auto_hide and cfg.auto_hide.delay)
   end
   -- Replace previous failure notification if one exists
-  notify(
-    "info",
-    "LaTeX build finished" .. format_duration_suffix(),
-    with_failure_replace(nil, failure_scope)
-  )
+  clear_failure_notification(failure_scope)
+  notify("info", "LaTeX build finished" .. format_duration_suffix())
 end
 
 -- Handle VimTeX compilation failure event (VimtexEventCompileFailed).

@@ -108,11 +108,39 @@ local state = {
   job = nil,
 }
 
--- Attempt to dismiss a previously shown notification handle regardless of the
--- backend (Snacks, nvim-notify, built-in vim.notify). Falls back to
--- vim.notify.dismiss to ensure stale toasts disappear even if a handle wasn't
--- returned.
-local function dismiss_notification_handle(handle)
+-- Convert a notifier entry into a token suitable for `replace`. Snacks expects
+-- an integer ID while other backends may return a table carrying the `id`
+-- field. When no identifier exists, callers simply skip the replacement field.
+local function notification_replace_token(entry)
+  if not entry then
+    return nil
+  end
+  local handle = entry.handle
+  if type(handle) == "table" then
+    if handle.id ~= nil then
+      return handle.id
+    end
+    if handle.handle ~= nil then
+      return handle.handle
+    end
+  end
+  return handle
+end
+
+-- Attempt to dismiss a previously shown notification entry regardless of the
+-- backend. Prefers any backend-provided `hide` callback, then falls back to
+-- conventional handle methods and finally to `vim.notify.dismiss`.
+local function dismiss_notification_entry(entry)
+  if not entry then
+    return
+  end
+  if entry.dismiss then
+    local ok = pcall(entry.dismiss, entry.handle)
+    if ok then
+      return
+    end
+  end
+  local handle = entry.handle
   if type(handle) == "table" then
     if type(handle.dismiss) == "function" then
       local ok = pcall(handle.dismiss, handle)
@@ -131,8 +159,6 @@ local function dismiss_notification_handle(handle)
       return
     end
   end
-  -- Guard against setups that replace vim.notify with a bare function (e.g. snacks.nvim)
-  -- where indexing `.dismiss` would normally throw; pcall keeps the fallback safe.
   local ok, dismiss = pcall(function()
     if not vim.notify then
       return nil
@@ -151,14 +177,6 @@ local function failure_notification_entry(scope)
     return nil
   end
   return state.failure_notifications[scope]
-end
-
-local function failure_notification_handle(scope)
-  local entry = failure_notification_entry(scope)
-  if entry then
-    return entry.handle
-  end
-  return nil
 end
 
 -- Generate a scoped key to associate notifications with either command jobs or
@@ -194,13 +212,17 @@ local function with_failure_replace(opts, scope)
   if not entry then
     return opts
   end
-  local handle = entry.handle
-  if opts then
-    opts.replace = handle
-  else
-    opts = { replace = handle }
+  local replace = notification_replace_token(entry)
+  if replace ~= nil then
+    if opts then
+      opts.replace = replace
+    else
+      opts = { replace = replace }
+    end
+  elseif not opts then
+    opts = {}
   end
-  dismiss_notification_handle(handle)
+  dismiss_notification_entry(entry)
   state.failure_notifications[scope] = nil
   return opts
 end
@@ -212,10 +234,13 @@ end
 -- to avoid type mismatches.
 local function failure_notification_options(notifications, scope)
   local failure_opts = {}
-  local handle = failure_notification_handle(scope)
-  if handle then
-    failure_opts.replace = handle
-    dismiss_notification_handle(handle)
+  local entry = failure_notification_entry(scope)
+  if entry then
+    local replace = notification_replace_token(entry)
+    if replace ~= nil then
+      failure_opts.replace = replace
+    end
+    dismiss_notification_entry(entry)
     state.failure_notifications[scope] = nil
   end
   local persist = notifications and notifications.persist_failure
@@ -294,7 +319,12 @@ local function notifier()
   local cfg = current_config()
   -- Use custom notifier if provided in config
   if cfg.notifier then
-    state.notify = cfg.notifier
+    if type(cfg.notifier) == "table" then
+      state.notify = vim.tbl_deep_extend("force", {}, cfg.notifier)
+      state.notify.backend = state.notify.backend or "custom"
+    else
+      state.notify = cfg.notifier
+    end
     return state.notify
   end
   -- Fallback to the shared helper so snacks/vim.notify auto-detection stays in sync with knit.run
@@ -314,11 +344,16 @@ local function notify(level, msg, opts)
   if not opts.title then
     opts.title = notifications.title or "VimTeX"
   end
-  local handler = notifier()[level]
+  local backend = notifier()
+  local handler = backend[level]
   if handler then
     local ok, result = pcall(handler, msg, opts)
     if ok then
-      return result
+      return {
+        backend = backend.backend or "custom",
+        handle = result,
+        dismiss = backend.hide,
+      }
     end
   end
   return nil
@@ -1138,10 +1173,12 @@ function M.run(opts)
       local failure_scope = command_failure_scope(state.job)
       local failure_opts = failure_notification_options(notifications, failure_scope)
       local failure_message = opts.error or (job_title .. " failed")
-      state.failure_notifications[failure_scope] = {
-        handle = notify("error", failure_message .. format_duration_suffix(), failure_opts),
-        scope = failure_scope,
-      }
+      local failure_entry =
+        notify("error", failure_message .. format_duration_suffix(), failure_opts)
+      if failure_entry then
+        failure_entry.scope = failure_scope
+        state.failure_notifications[failure_scope] = failure_entry
+      end
     end
     if opts.on_exit then
       opts.on_exit(obj)
@@ -1291,7 +1328,11 @@ local function on_compile_succeeded(event)
     schedule_hide(cfg.auto_hide and cfg.auto_hide.delay)
   end
   -- Replace previous failure notification if one exists
-  notify("info", "LaTeX build finished" .. format_duration_suffix(), with_failure_replace(nil, failure_scope))
+  notify(
+    "info",
+    "LaTeX build finished" .. format_duration_suffix(),
+    with_failure_replace(nil, failure_scope)
+  )
 end
 
 -- Handle VimTeX compilation failure event (VimtexEventCompileFailed).
@@ -1323,10 +1364,12 @@ local function on_compile_failed(event)
   local notifications = cfg.notifications or {}
   local failure_scope = vimtex_failure_scope(ctx.target)
   local failure_opts = failure_notification_options(notifications, failure_scope)
-  state.failure_notifications[failure_scope] = {
-    handle = notify("error", "LaTeX build failed" .. format_duration_suffix(), failure_opts),
-    scope = failure_scope,
-  }
+  local failure_entry =
+    notify("error", "LaTeX build failed" .. format_duration_suffix(), failure_opts)
+  if failure_entry then
+    failure_entry.scope = failure_scope
+    state.failure_notifications[failure_scope] = failure_entry
+  end
 end
 
 local function on_compile_stopped()

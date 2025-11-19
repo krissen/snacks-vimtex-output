@@ -25,7 +25,31 @@ end
 -- Resolve snacks.notify when installed and fall back to vim.notify while keeping
 -- a consistent info/warn/error interface for callers.
 function M.resolve_notifier()
-  local notify = {
+  local ok, snacks = pcall(require, "snacks")
+  if ok and snacks.notify and snacks.notifier then
+    return {
+      backend = "snacks",
+      info = function(msg, opts)
+        return snacks.notify.info(msg, opts)
+      end,
+      warn = function(msg, opts)
+        return snacks.notify.warn(msg, opts)
+      end,
+      error = function(msg, opts)
+        return snacks.notify.error(msg, opts)
+      end,
+      hide = function(handle)
+        local token = handle
+        if type(token) == "table" then
+          token = token.id or token.handle or token
+        end
+        snacks.notifier.hide(token)
+      end,
+    }
+  end
+
+  return {
+    backend = "vim",
     info = function(msg, opts)
       return vim.notify(msg, vim.log.levels.INFO, opts)
     end,
@@ -36,19 +60,6 @@ function M.resolve_notifier()
       return vim.notify(msg, vim.log.levels.ERROR, opts)
     end,
   }
-  local ok, snacks = pcall(require, "snacks")
-  if ok and snacks.notify then
-    notify.info = function(msg, opts)
-      return snacks.notify.info(msg, opts)
-    end
-    notify.warn = function(msg, opts)
-      return snacks.notify.warn(msg, opts)
-    end
-    notify.error = function(msg, opts)
-      return snacks.notify.error(msg, opts)
-    end
-  end
-  return notify
 end
 
 return M

@@ -75,7 +75,8 @@ function OutputPanelStrategy:start(task)
   -- Ensure Overseer observes the final status once the output-panel job finishes.
   local function handle_exit(obj)
     self.handle = nil
-    if vim.v.exiting ~= vim.NIL then
+    -- Avoid dispatching exit events during Neovim shutdown to prevent redundant callbacks.
+    if vim.v.exiting ~= 0 then
       return
     end
     task:on_exit(obj.code or 0)

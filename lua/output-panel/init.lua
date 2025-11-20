@@ -172,10 +172,11 @@ end
 -- Capture the active command job scope using its user-facing title so reruns of
 -- the same workflow share a consistent identifier regardless of temp files.
 local function command_failure_scope(job)
+  local kind = (job and job.kind) or "command"
   if not job then
-    return failure_scope_key("command", "unknown")
+    return failure_scope_key(kind, "unknown")
   end
-  return failure_scope_key("command", job.title or job.window_title or "unknown")
+  return failure_scope_key(kind, job.title or job.window_title or "unknown")
 end
 
 -- Capture the VimTeX build scope via the compiler output path so consecutive
@@ -246,7 +247,7 @@ local function set_active_config(overrides)
 end
 
 local function command_job_active()
-  return state.job and state.job.kind == "command" and state.job.active ~= false
+  return state.job and state.job.active ~= false
 end
 
 local function open_log_file(path)
@@ -266,6 +267,38 @@ local function append_log(handle, chunk)
   end
   handle:write(chunk)
   handle:flush()
+end
+
+-- Normalize output chunks coming from vim.system, jobstart, or Overseer components
+-- into newline-delimited text so downstream streaming behaves consistently.
+local function normalize_chunk(data)
+  if type(data) == "table" then
+    local parts = {}
+    for _, line in ipairs(data) do
+      if line and line ~= "" then
+        parts[#parts + 1] = line
+      end
+    end
+    if #parts == 0 then
+      return nil
+    end
+    return table.concat(parts, "\n") .. "\n"
+  end
+  if not data or data == "" then
+    return nil
+  end
+  return data
+end
+
+-- Append a chunk to the in-memory accumulator and on-disk log while resetting
+-- cached file stats so polling picks up the newest bytes immediately.
+local function stream_chunk(target, handle, chunk)
+  if not chunk or chunk == "" then
+    return
+  end
+  append_log(handle, chunk)
+  state.last_stat = nil
+  target[#target + 1] = chunk
 end
 
 local function auto_open_enabled()
@@ -955,6 +988,169 @@ local function open_overlay(opts)
   end
 end
 
+-- Start a streaming session so external runners (output-panel.run, Overseer, or
+-- custom integrations) can feed stdout/stderr into the shared panel state.
+-- Returns a small handle with append/finish helpers for the caller to control
+-- lifecycle without duplicating notification or window code.
+local function create_stream_session(opts)
+  opts = opts or {}
+  if command_job_active() then
+    notify("warn", "Another command is already running. Showing its output instead.")
+    return nil
+  end
+
+  set_active_config(nil)
+  local overrides
+  local base_profiles = config.profiles or {}
+  if opts.profile and base_profiles[opts.profile] then
+    overrides = vim.deepcopy(base_profiles[opts.profile])
+  end
+  if opts.config then
+    if overrides then
+      overrides = vim.tbl_deep_extend("force", overrides, opts.config)
+    else
+      overrides = vim.deepcopy(opts.config)
+    end
+  end
+  if overrides then
+    set_active_config(overrides)
+  end
+
+  local job_title = opts.title or opts.window_title or "Command"
+  local window_title = opts.window_title or job_title
+
+  local log_path, handle = open_log_file(opts.log_path)
+  if not log_path or not handle then
+    notify("error", "Unable to create a log file for command output")
+    set_active_config(nil)
+    return nil
+  end
+
+  stop_polling()
+  set_target(log_path)
+  state.job = {
+    kind = opts.kind or "command",
+    active = true,
+    title = job_title,
+    window_title = window_title,
+    log_path = log_path,
+    log_handle = handle,
+    profile = opts.profile,
+  }
+  state.status = "running"
+  state.started_at = current_time()
+  state.elapsed = nil
+  state.border_hl = opts.border_hl or (current_config().border_highlight or "FloatBorder")
+  state.running_notified = true
+  state.hide_token = state.hide_token + 1
+  state.render_retry_token = state.render_retry_token + 1
+
+  local open_panel = opts.open ~= false
+  if open_panel then
+    render_window({
+      target = log_path,
+      poll = true,
+      focus = opts.focus,
+      title = window_title,
+      source_buf = opts.source_buf,
+    })
+  else
+    ensure_output_ready({ target = log_path, quiet = true })
+    start_polling()
+  end
+
+  if opts.notify_start ~= false then
+    local start_message = opts.start or opts.start_message or (job_title .. " started…")
+    clear_failure_notification(command_failure_scope(state.job))
+    notify("info", start_message)
+  end
+
+  local stdout_chunks, stderr_chunks = {}, {}
+
+  -- Close the run, update status + notifications, and optionally re-render the
+  -- panel so it reflects the final job state.
+  local function finish_stream(result)
+    if state.job and state.job.log_handle then
+      pcall(state.job.log_handle.flush, state.job.log_handle)
+      pcall(state.job.log_handle.close, state.job.log_handle)
+      state.job.log_handle = nil
+    end
+    local elapsed = elapsed_seconds()
+    state.elapsed = elapsed
+    state.started_at = nil
+    state.job = state.job or {}
+    state.job.active = false
+    state.running_notified = false
+    stop_polling()
+    local cfg = current_config()
+    local window_exists = state.win and vim.api.nvim_win_is_valid(state.win)
+    local obj = result or {}
+    obj.code = obj.code or 0
+    obj.stdout = obj.stdout or table.concat(stdout_chunks)
+    obj.stderr = obj.stderr or table.concat(stderr_chunks)
+    if obj.code == 0 then
+      state.status = "success"
+      state.border_hl = "DiagnosticOk"
+      if open_panel or window_exists then
+        render_window({
+          target = log_path,
+          focus = state.focused,
+          border_hl = state.border_hl,
+        })
+      end
+      if window_exists then
+        schedule_hide(cfg.auto_hide and cfg.auto_hide.delay)
+      end
+      clear_failure_notification(command_failure_scope(state.job))
+      notify("info", (opts.success or (job_title .. " finished")) .. format_duration_suffix())
+    else
+      state.status = "failure"
+      state.border_hl = "DiagnosticError"
+      state.hide_token = state.hide_token + 1
+      if open_panel or window_exists or cfg.open_on_error ~= false then
+        render_window({
+          target = log_path,
+          focus = state.focused,
+          border_hl = state.border_hl,
+        })
+      end
+      local notifications = cfg.notifications or {}
+      local failure_scope = command_failure_scope(state.job)
+      local failure_opts = failure_notification_options(notifications, failure_scope)
+      local failure_message = opts.error or (job_title .. " failed")
+      local failure_entry =
+        notify("error", failure_message .. format_duration_suffix(), failure_opts)
+      if failure_entry then
+        failure_entry.scope = failure_scope
+        state.failure_notifications[failure_scope] = failure_entry
+      end
+    end
+    if opts.on_exit then
+      opts.on_exit(obj)
+    end
+    set_active_config(nil)
+  end
+
+  return {
+    log_path = log_path,
+    append_stdout = function(_, chunk)
+      local normalized = normalize_chunk(chunk)
+      if normalized then
+        stream_chunk(stdout_chunks, handle, normalized)
+      end
+    end,
+    append_stderr = function(_, chunk)
+      local normalized = normalize_chunk(chunk)
+      if normalized then
+        stream_chunk(stderr_chunks, handle, normalized)
+      end
+    end,
+    finish = function(_, result)
+      finish_stream(result or {})
+    end,
+  }
+end
+
 function M.show()
   state.hide_token = state.hide_token + 1
   state.render_retry_token = state.render_retry_token + 1
@@ -993,16 +1189,19 @@ function M.toggle_focus()
   render_window({ focus = not state.focused })
 end
 
+---Start a streaming session that external runners can feed with output.
+---@param opts table
+---@return table|nil
+function M.stream(opts)
+  return create_stream_session(opts)
+end
+
 ---Run an arbitrary shell command and stream its output into the panel.
 ---@param opts {cmd:string|string[]|fun():string|string[], title?:string, window_title?:string, profile?:string, config?:table, cwd?:string, env?:table<string,string>, focus?:boolean, open?:boolean, success?:string, error?:string, start?:string, start_message?:string, notify_start?:boolean, log_path?:string, border_hl?:string, on_exit?:fun(obj:vim.SystemCompleted)}
 function M.run(opts)
   opts = opts or {}
   if not opts.cmd then
     notify("error", "output-panel.run() requires a cmd option")
-    return
-  end
-  if command_job_active() then
-    notify("warn", "Another command is already running. Showing its output instead.")
     return
   end
 
@@ -1012,161 +1211,30 @@ function M.run(opts)
     return
   end
 
-  -- Build per-run config overrides from global profiles + explicit overrides.
-  set_active_config(nil)
-  local overrides
-  local base_profiles = config.profiles or {}
-  if opts.profile and base_profiles[opts.profile] then
-    overrides = vim.deepcopy(base_profiles[opts.profile])
-  end
-  if opts.config then
-    if overrides then
-      overrides = vim.tbl_deep_extend("force", overrides, opts.config)
-    else
-      overrides = vim.deepcopy(opts.config)
-    end
-  end
-  if overrides then
-    set_active_config(overrides)
-  end
-
   local job_title
   if type(command) == "table" then
     job_title = opts.title or table.concat(command, " ")
   else
     job_title = opts.title or tostring(command)
   end
-  local window_title = opts.window_title or job_title
-
-  local log_path, handle = open_log_file(opts.log_path)
-  if not log_path or not handle then
-    notify("error", "Unable to create a log file for command output")
-    set_active_config(nil)
-    return
-  end
-
-  local stdout_chunks, stderr_chunks = {}, {}
-
-  stop_polling()
-  set_target(log_path)
-  state.job = {
+  local session = create_stream_session({
     kind = "command",
-    active = true,
     title = job_title,
-    window_title = window_title,
-    log_path = log_path,
-    log_handle = handle,
+    window_title = opts.window_title,
     profile = opts.profile,
-  }
-  state.status = "running"
-  state.started_at = current_time()
-  state.elapsed = nil
-  state.border_hl = opts.border_hl or (current_config().border_highlight or "FloatBorder")
-  state.running_notified = true
-  state.hide_token = state.hide_token + 1
-  state.render_retry_token = state.render_retry_token + 1
-
-  local open_panel = opts.open ~= false
-  if open_panel then
-    render_window({ target = log_path, poll = true, focus = opts.focus, title = window_title })
-  else
-    ensure_output_ready({ target = log_path, quiet = true })
-    start_polling()
-  end
-
-  if opts.notify_start ~= false then
-    local start_message = opts.start or opts.start_message or (job_title .. " started…")
-    clear_failure_notification(command_failure_scope(state.job))
-    notify("info", start_message)
-  end
-
-  -- Append a chunk to both the on-disk log and an in-memory accumulator for notifications.
-  local function stream_chunk(target, chunk)
-    if not chunk or chunk == "" then
-      return
-    end
-    append_log(handle, chunk)
-    state.last_stat = nil
-    target[#target + 1] = chunk
-  end
-
-  -- Wrap vim.system callbacks so stdout/stderr share the same chunk bookkeeping.
-  local function make_system_handler(target)
-    return function(err, data)
-      if err and err ~= "" then
-        stream_chunk(stderr_chunks, err)
-      end
-      if data and data ~= "" then
-        stream_chunk(target, data)
-      end
-    end
-  end
-
-  -- Convert jobstart line tables into newline-delimited text before streaming.
-  local function handle_job_data(target, data)
-    if type(data) ~= "table" then
-      return
-    end
-    local parts = {}
-    for _, line in ipairs(data) do
-      if line and line ~= "" then
-        parts[#parts + 1] = line
-      end
-    end
-    if #parts == 0 then
-      return
-    end
-    stream_chunk(target, table.concat(parts, "\n") .. "\n")
-  end
-
-  local function finalize_job(obj)
-    if state.job and state.job.log_handle then
-      pcall(state.job.log_handle.flush, state.job.log_handle)
-      pcall(state.job.log_handle.close, state.job.log_handle)
-      state.job.log_handle = nil
-    end
-    local elapsed = elapsed_seconds()
-    state.elapsed = elapsed
-    state.started_at = nil
-    state.job = state.job or {}
-    state.job.active = false
-    state.running_notified = false
-    stop_polling()
-    local cfg = current_config()
-    local window_exists = state.win and vim.api.nvim_win_is_valid(state.win)
-    if obj.code == 0 then
-      state.status = "success"
-      state.border_hl = "DiagnosticOk"
-      if open_panel or window_exists then
-        render_window({ target = log_path, focus = state.focused, border_hl = state.border_hl })
-      end
-      if window_exists then
-        schedule_hide(cfg.auto_hide and cfg.auto_hide.delay)
-      end
-      clear_failure_notification(command_failure_scope(state.job))
-      notify("info", (opts.success or (job_title .. " finished")) .. format_duration_suffix())
-    else
-      state.status = "failure"
-      state.border_hl = "DiagnosticError"
-      state.hide_token = state.hide_token + 1
-      if open_panel or window_exists or cfg.open_on_error ~= false then
-        render_window({ target = log_path, focus = state.focused, border_hl = state.border_hl })
-      end
-      local notifications = cfg.notifications or {}
-      local failure_scope = command_failure_scope(state.job)
-      local failure_opts = failure_notification_options(notifications, failure_scope)
-      local failure_message = opts.error or (job_title .. " failed")
-      local failure_entry =
-        notify("error", failure_message .. format_duration_suffix(), failure_opts)
-      if failure_entry then
-        failure_entry.scope = failure_scope
-        state.failure_notifications[failure_scope] = failure_entry
-      end
-    end
-    if opts.on_exit then
-      opts.on_exit(obj)
-    end
-    set_active_config(nil)
+    config = opts.config,
+    notify_start = opts.notify_start,
+    start = opts.start or opts.start_message,
+    success = opts.success,
+    error = opts.error,
+    focus = opts.focus,
+    open = opts.open,
+    log_path = opts.log_path,
+    border_hl = opts.border_hl,
+    on_exit = opts.on_exit,
+  })
+  if not session then
+    return
   end
 
   local use_system = type(vim.system) == "function"
@@ -1174,23 +1242,31 @@ function M.run(opts)
     local ok, handle_or_err = pcall(vim.system, command, {
       cwd = opts.cwd,
       env = opts.env,
-      stdout = make_system_handler(stdout_chunks),
-      stderr = make_system_handler(stderr_chunks),
+      stdout = function(err, data)
+        if err and err ~= "" then
+          session:append_stderr(err)
+        end
+        if data and data ~= "" then
+          session:append_stdout(data)
+        end
+      end,
+      stderr = function(err, data)
+        if err and err ~= "" then
+          session:append_stderr(err)
+        end
+        if data and data ~= "" then
+          session:append_stderr(data)
+        end
+      end,
     }, function(obj)
-      obj.stdout = table.concat(stdout_chunks)
-      obj.stderr = table.concat(stderr_chunks)
       vim.schedule(function()
-        finalize_job(obj)
+        session:finish(obj)
       end)
     end)
 
     if not ok then
-      stream_chunk(stderr_chunks, "Failed to start command: " .. tostring(handle_or_err))
-      finalize_job({
-        code = -1,
-        stdout = table.concat(stdout_chunks),
-        stderr = table.concat(stderr_chunks),
-      })
+      session:append_stderr("Failed to start command: " .. tostring(handle_or_err))
+      session:finish({ code = -1 })
       return
     end
 
@@ -1204,29 +1280,25 @@ function M.run(opts)
     stdout_buffered = false,
     stderr_buffered = false,
     on_stdout = function(_, data)
-      handle_job_data(stdout_chunks, data)
+      session:append_stdout(data)
     end,
     on_stderr = function(_, data)
-      handle_job_data(stderr_chunks, data)
+      session:append_stderr(data)
     end,
     on_exit = function(_, code)
       vim.schedule(function()
-        finalize_job({
+        session:finish({
           code = code,
           signal = 0,
-          stdout = table.concat(stdout_chunks),
-          stderr = table.concat(stderr_chunks),
         })
       end)
     end,
   })
   if jobid <= 0 then
     notify("error", "Failed to start command with jobstart()")
-    finalize_job({
+    session:finish({
       code = 1,
       signal = 0,
-      stdout = table.concat(stdout_chunks),
-      stderr = table.concat(stderr_chunks),
     })
     return
   end
@@ -1404,7 +1476,13 @@ local function setup_autocmds()
 end
 
 local function setup_commands()
+  -- Provide generic commands plus VimTeX-prefixed aliases for backwards compatibility.
   local commands = {
+    OutputPanelShow = M.show,
+    OutputPanelHide = M.hide,
+    OutputPanelToggle = M.toggle,
+    OutputPanelToggleFocus = M.toggle_focus,
+    OutputPanelToggleFollow = M.toggle_follow,
     VimtexOutputShow = M.show,
     VimtexOutputHide = M.hide,
     VimtexOutputToggle = M.toggle,

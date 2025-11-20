@@ -124,16 +124,19 @@ layout, or disable `notify_start`).
 ### VimTeX integration
 
 Install VimTeX, call `setup()`, and the panel automatically follows
-`VimtexEventCompiling`, `VimtexEventCompileSuccess`, etc. The legacy commands are
-still available:
+`VimtexEventCompiling`, `VimtexEventCompileSuccess`, etc. The plugin now exposes
+general commands while keeping the VimTeX-prefixed aliases for compatibility:
 
 | Command | Description |
 | --- | --- |
-| `:VimtexOutputShow` | Open the panel for the active VimTeX buffer. |
-| `:VimtexOutputHide` | Close the panel. |
-| `:VimtexOutputToggle` | Toggle visibility. |
-| `:VimtexOutputToggleFocus` | Switch between mini/focus layouts. |
-| `:VimtexOutputToggleFollow` | Toggle follow/tail mode. |
+| `:OutputPanelShow` | Open the panel for the active VimTeX buffer or last command. |
+| `:OutputPanelHide` | Close the panel. |
+| `:OutputPanelToggle` | Toggle visibility. |
+| `:OutputPanelToggleFocus` | Switch between mini/focus layouts. |
+| `:OutputPanelToggleFollow` | Toggle follow/tail mode. |
+
+Legacy `:VimtexOutput*` commands remain as aliases so existing mappings keep
+working.
 
 Press `<Esc>` while focused to drop back to the compact mini overlay without closing
 the panel.
@@ -230,9 +233,9 @@ Failure notifications are scoped per build/command, so rerunning the same job,
 letting a watcher (like VimTeX's continuous `latexmk`) kick off another cycle,
 or simply finishing successfully immediately clears the stale error. Clearing a
 toast never prunes Snacks' history viewer, so you can still audit prior errors
-while unrelated tasks keep their own entries.
-Toggle it ad-hoc via `:VimtexOutputToggleFollow` (or
-`require("output-panel").toggle_follow()`). `max_lines` trims the scratch buffer
+while unrelated tasks keep their own entries. Toggle it ad-hoc via
+`:OutputPanelToggleFollow` (alias: `:VimtexOutputToggleFollow`) or
+`require("output-panel").toggle_follow()`. `max_lines` trims the scratch buffer
 so very chatty commands never retain more than the configured line count, and
 `open_on_error` makes failures pop the panel even if live output was disabled
 while the job ran.
@@ -265,8 +268,8 @@ This applies everywhere—VimTeX events and manual command runs.
   compiling.
 - Disable `auto_hide` globally or per profile if you want successful runs to
   stay visible.
-- Toggle follow mode with `:VimtexOutputToggleFollow` before scrolling through
-  older log lines.
+- Toggle follow mode with `:OutputPanelToggleFollow` (alias:
+  `:VimtexOutputToggleFollow`) before scrolling through older log lines.
 - Lower `max_lines` if you're running extremely verbose scripts and want to keep
   the scratch buffer tighter.
 - Assign `notifier` to integrate with `noice.nvim`, `rcarriga/nvim-notify`, or
@@ -278,8 +281,8 @@ This applies everywhere—VimTeX events and manual command runs.
   and that the command exists in your `$PATH`. The panel writes every chunk to a
   temp file; open it via `:edit {path}` to inspect raw output.
 - **VimTeX overlay never opens** – Set `auto_open.enabled = true` or run one of
-  the `:VimtexOutput*` commands manually. Verify `vim.b.vimtex.compiler.output`
-  is populated in your TeX buffer.
+  the `:OutputPanel*` commands manually (legacy `:VimtexOutput*` aliases also
+  work). Verify `vim.b.vimtex.compiler.output` is populated in your TeX buffer.
 - **Notifications missing** – Confirm `notifications.enabled = true` and that
   your custom notifier isn't erroring. The plugin logs failures inside the panel.
 - **Want different layouts per workflow** – Define multiple profiles and pass
@@ -333,6 +336,23 @@ learning a new task abstraction. Overseer can be configured to behave similarly,
 but doing so typically requires authoring task definitions and tweaking layout
 settings—effort that outweighs the benefit when you only need a “fire-and-forget”
 pane.
+
+#### Streaming Overseer tasks into the panel
+
+The plugin ships an Overseer component called `output_panel`. Include it in your
+task components to stream output into the same floating buffer used by
+`:OutputPanelToggle`/`:OutputPanelShow`:
+
+```lua
+require("overseer").setup({
+  component_aliases = {
+    default = { "default", { "output_panel", open = true } },
+  },
+})
+```
+
+You can also attach it to individual tasks via `components = { "default",
+{ "output_panel", focus = false } }` when calling `overseer.run_template()`.
 
 ### ToggleTerm and generic terminals
 

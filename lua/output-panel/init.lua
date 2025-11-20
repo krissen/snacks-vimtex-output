@@ -58,6 +58,13 @@ local default_config = {
     persist_failure = 45,
   },
   notifier = nil,
+  -- Optional Overseer integration config so tasks can stream into the panel without extra setup.
+  overseer = {
+    enabled = false,
+    profile = "overseer",
+    focus = false,
+    open = true,
+  },
   border_highlight = "FloatBorder",
   follow = {
     enabled = true,
@@ -68,7 +75,14 @@ local default_config = {
   },
   max_lines = 4000,
   open_on_error = true,
-  profiles = {},
+  profiles = {
+    -- Default profile for Overseer tasks so their logs stay visible until inspected.
+    overseer = {
+      notifications = { title = "Overseer" },
+      auto_hide = { enabled = false },
+      auto_open = { enabled = true },
+    },
+  },
 }
 
 local config = vim.deepcopy(default_config)
@@ -519,6 +533,15 @@ local function ensure_output_buffer()
   vim.api.nvim_set_option_value("filetype", "vimtexoutput", { buf = buf })
   state.buf = buf
   return buf
+end
+
+-- Expose the scratch buffer so external integrations (like Overseer) can reuse
+-- the same live log view without creating duplicate windows.
+function M.get_buffer()
+  if state.buf and vim.api.nvim_buf_is_valid(state.buf) then
+    return state.buf
+  end
+  return nil
 end
 
 -- Apply a callback to the scratch buffer while safely toggling the modifiable flag.
@@ -976,7 +999,7 @@ function M.toggle_focus()
 end
 
 ---Run an arbitrary shell command and stream its output into the panel.
----@param opts {cmd:string|string[]|fun():string|string[], title?:string, window_title?:string, profile?:string, config?:table, cwd?:string, env?:table<string,string>, focus?:boolean, open?:boolean, success?:string, error?:string, start?:string, start_message?:string, notify_start?:boolean, log_path?:string, border_hl?:string, on_exit?:fun(obj:vim.SystemCompleted)}
+---@param opts {cmd:string|string[]|fun():string|string[], title?:string, window_title?:string, profile?:string, config?:table, cwd?:string, env?:table<string,string>, focus?:boolean, open?:boolean, success?:string, error?:string, start?:string, start_message?:string, notify_start?:boolean, log_path?:string, border_hl?:string, on_exit?:fun(obj:vim.SystemCompleted), on_output?:fun(lines:string[]), on_output_lines?:fun(lines:string[])}
 function M.run(opts)
   opts = opts or {}
   if not opts.cmd then
@@ -1062,6 +1085,33 @@ function M.run(opts)
     notify("info", start_message)
   end
 
+  -- Forward stdout/stderr slices to downstream callbacks so integrations can
+  -- react to live output without reimplementing the streaming logic.
+  local function emit_lines(lines)
+    if not lines or #lines == 0 then
+      return
+    end
+    if opts.on_output then
+      opts.on_output(lines)
+    end
+    if opts.on_output_lines then
+      opts.on_output_lines(lines)
+    end
+  end
+
+  -- Split raw text chunks into individual lines before dispatching them to
+  -- observers that expect table payloads.
+  local function emit_chunk(chunk)
+    if not chunk or chunk == "" then
+      return
+    end
+    local segments = vim.split(chunk, "\n", { plain = true })
+    if segments[#segments] == "" then
+      segments[#segments] = nil
+    end
+    emit_lines(segments)
+  end
+
   -- Append a chunk to both the on-disk log and an in-memory accumulator for notifications.
   local function stream_chunk(target, chunk)
     if not chunk or chunk == "" then
@@ -1077,9 +1127,11 @@ function M.run(opts)
     return function(err, data)
       if err and err ~= "" then
         stream_chunk(stderr_chunks, err)
+        emit_chunk(err)
       end
       if data and data ~= "" then
         stream_chunk(target, data)
+        emit_chunk(data)
       end
     end
   end
@@ -1098,6 +1150,7 @@ function M.run(opts)
     if #parts == 0 then
       return
     end
+    emit_lines(parts)
     stream_chunk(target, table.concat(parts, "\n") .. "\n")
   end
 
@@ -1126,10 +1179,7 @@ function M.run(opts)
         schedule_hide(cfg.auto_hide and cfg.auto_hide.delay)
       end
       clear_failure_notification(command_failure_scope(state.job))
-      notify(
-        "info",
-        (opts.success or (job_title .. " finished")) .. format_duration_suffix()
-      )
+      notify("info", (opts.success or (job_title .. " finished")) .. format_duration_suffix())
     else
       state.status = "failure"
       state.border_hl = "DiagnosticError"

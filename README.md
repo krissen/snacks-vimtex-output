@@ -88,6 +88,8 @@ Key behaviours:
   `success`/`error` strings for custom labels.
 - Set `open = false` to keep the panel hidden until you manually call
   `require("output-panel").show()`.
+- `on_output`/`on_output_lines` callbacks receive live chunks if you need to
+  mirror the stream elsewhere (the Overseer strategy uses this hook).
 - Each run gets its own temporary log file, so you can revisit the output even
   after the command completes.
 
@@ -208,7 +210,19 @@ require("output-panel").setup({
   max_lines = 4000,
   open_on_error = true,
   notifier = nil,
+  overseer = {
+    enabled = false,
+    profile = "overseer",
+    focus = false,
+    open = true,
+  },
   profiles = {
+    overseer = {
+      notifications = { title = "Overseer" },
+      auto_hide = { enabled = false },
+      auto_open = { enabled = true },
+    },
+    -- Example profile for knitting workflows (non-default)
     knit = {
       notifications = { title = "Knit" },
       auto_hide = { enabled = false },
@@ -227,12 +241,14 @@ Failure notifications are scoped per build/command, so rerunning the same job,
 letting a watcher (like VimTeX's continuous `latexmk`) kick off another cycle,
 or simply finishing successfully immediately clears the stale error. Clearing a
 toast never prunes Snacks' history viewer, so you can still audit prior errors
-while unrelated tasks keep their own entries.
-Toggle it ad-hoc via `:VimtexOutputToggleFollow` (or
-`require("output-panel").toggle_follow()`). `max_lines` trims the scratch buffer
-so very chatty commands never retain more than the configured line count, and
-`open_on_error` makes failures pop the panel even if live output was disabled
-while the job ran.
+while unrelated tasks keep their own entries. Toggle it ad-hoc via
+`:VimtexOutputToggleFollow` (or `require("output-panel").toggle_follow()`).
+`max_lines` trims the scratch buffer so very chatty commands never retain more
+than the configured line count, and `open_on_error` makes failures pop the
+panel even if live output was disabled while the job ran. The `overseer` table
+controls whether the custom Overseer strategy should apply the bundled profile
+(auto-open, no auto-hide, and an "Overseer" notification title) whenever a task
+requests the `output_panel` strategy.
 
 ### Profiles
 
@@ -243,6 +259,34 @@ other commands.
 
 You can also bypass profiles and pass `config = { ... }` directly to `run()` for
 one-off overrides.
+
+### Overseer integration
+
+The plugin ships an Overseer strategy named `output_panel`. Enable the
+`overseer` table in `setup()` to apply the bundled profile (auto-open, no
+auto-hide, "Overseer" notifications) whenever a task uses the strategy, then
+point your tasks at it:
+
+```lua
+require("output-panel").setup({
+  overseer = { enabled = true },
+})
+
+require("overseer").setup({
+  -- your Overseer config
+})
+
+vim.keymap.set("n", "<leader>or", function()
+  require("overseer").run_template({
+    name = "shell", -- any template or task definition
+    strategy = { "output_panel" },
+  })
+end)
+```
+
+Status updates and output still flow back to Overseer components (diagnostics,
+task list, notifications), while stopping a task issues `jobstop()`/`kill()`
+against the underlying process before letting output-panel mark completion.
 
 ### Notification backends
 

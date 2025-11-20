@@ -1054,13 +1054,9 @@ local function create_stream_session(opts)
   state.hide_token = state.hide_token + 1
   state.render_retry_token = state.render_retry_token + 1
 
-  local open_panel = opts.open
-  if open_panel == nil and override_auto_open_enabled ~= nil then
-    open_panel = override_auto_open_enabled
-  end
-  if open_panel == nil then
-    open_panel = true
-  end
+  -- Prefer an explicit `open` override, then fall back to profile auto-open, and
+  -- default to showing the panel when neither is provided.
+  local open_panel = opts.open ~= nil and opts.open or override_auto_open_enabled or true
   if open_panel then
     render_window({
       target = log_path,

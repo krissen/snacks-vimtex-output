@@ -87,7 +87,9 @@ Key behaviours:
 - Notifications inherit their title/timeouts from the active profile. Provide
   `success`/`error` strings for custom labels.
 - Set `open = false` to keep the panel hidden until you manually call
-  `require("output-panel").show()`.
+  `require("output-panel").show()`. You can also set `auto_open.enabled` inside
+  a profile or `config` override to change the default when `open` is omitted,
+  letting a specific workflow stay quiet without affecting others.
 - Each run gets its own temporary log file, so you can revisit the output even
   after the command completes.
 

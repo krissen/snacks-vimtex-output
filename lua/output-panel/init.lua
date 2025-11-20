@@ -1016,6 +1016,15 @@ local function create_stream_session(opts)
     set_active_config(overrides)
   end
 
+  -- Capture explicit auto_open overrides so profiles/config blocks can disable
+  -- the initial render without affecting other jobs. Only respect the flag when
+  -- the user provided it, otherwise preserve the historical open-by-default
+  -- behaviour for command runs.
+  local override_auto_open_enabled
+  if overrides and overrides.auto_open then
+    override_auto_open_enabled = overrides.auto_open.enabled
+  end
+
   local job_title = opts.title or opts.window_title or "Command"
   local window_title = opts.window_title or job_title
 
@@ -1045,7 +1054,13 @@ local function create_stream_session(opts)
   state.hide_token = state.hide_token + 1
   state.render_retry_token = state.render_retry_token + 1
 
-  local open_panel = opts.open ~= false
+  local open_panel = opts.open
+  if open_panel == nil and override_auto_open_enabled ~= nil then
+    open_panel = override_auto_open_enabled
+  end
+  if open_panel == nil then
+    open_panel = true
+  end
   if open_panel then
     render_window({
       target = log_path,

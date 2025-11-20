@@ -805,7 +805,7 @@ local function window_dimensions(focused)
   return width, height, row, col
 end
 
--- Clear any active scrolloff guard autocmds so option tweaks outside the overlay stop being rewritten.
+-- Clear any active scrolloff guard autocmds and stop enforcing the minimum scrolloff requirement.
 local function clear_scrolloff_guard()
   if state.scrolloff_guard then
     pcall(vim.api.nvim_del_augroup_by_id, state.scrolloff_guard)
@@ -830,7 +830,7 @@ local function enforce_scrolloff_guard(needed)
   end
   local group = state.scrolloff_guard
   if group == nil then
-    group = vim.api.nvim_create_augroup("output_panel_scrolloff", { clear = true })
+    group = vim.api.nvim_create_augroup("output_panel_scrolloff_guard", { clear = true })
     state.scrolloff_guard = group
   else
     pcall(vim.api.nvim_clear_autocmds, { group = group })
@@ -839,8 +839,11 @@ local function enforce_scrolloff_guard(needed)
     group = group,
     pattern = "scrolloff",
     callback = function()
-      local guard_needed = state.scrolloff_needed or 0
-      if guard_needed <= 0 then
+      if state.scrolloff_guard ~= group then
+        return
+      end
+      local guard_needed = state.scrolloff_needed
+      if guard_needed == nil or guard_needed <= 0 then
         return
       end
       if not state.win or not vim.api.nvim_win_is_valid(state.win) or state.focused then

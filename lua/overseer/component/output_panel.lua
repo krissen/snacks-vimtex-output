@@ -2,6 +2,7 @@
 -- Stream Overseer task output through output-panel.nvim so toggles and overlays
 -- stay in sync with ad-hoc command runs.
 
+local constants = require("overseer.constants")
 local panel = require("output-panel")
 
 return {
@@ -112,12 +113,24 @@ return {
         -- Ensure multi-line batches from Overseer land in the same buffer.
         self:on_output(task, lines, stream)
       end,
-      on_complete = function(self, _, code)
+      on_complete = function(self, _, status, result)
         -- Finalize the session so notifications and border colors reflect exit status.
+        -- Overseer reports string statuses; translate to an exit code so the panel UI
+        -- can color the border and emit notifications accurately.
         if not self.stream then
           return
         end
-        self.stream:finish({ code = code })
+
+        local exit_code
+        if status == constants.STATUS.SUCCESS then
+          exit_code = 0
+        elseif type(result) == "table" and type(result.exit_code) == "number" then
+          exit_code = result.exit_code
+        else
+          exit_code = 1
+        end
+
+        self.stream:finish({ code = exit_code })
         self.stream = nil
       end,
       on_dispose = function(self, _)

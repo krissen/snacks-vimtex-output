@@ -197,10 +197,13 @@ require("output-panel").setup({
   notifications = {
     enabled = true,
     title = "VimTeX",
-    persist_failure = true,
+    persist_failure = 45,
   },
   follow = {
     enabled = true,
+  },
+  poll = {
+    interval = 150,
   },
   max_lines = 4000,
   open_on_error = true,
@@ -215,6 +218,16 @@ require("output-panel").setup({
 ```
 
 `follow.enabled` keeps the panel in tail/follow mode whenever it's opened.
+`poll.interval` controls how often (in milliseconds) the plugin refreshes the
+log buffer while the window is visible—lower values update faster but run the
+timer more frequently. `notifications.persist_failure` accepts `false` to skip
+sticky errors, `0`, `-1`, or `true` to keep them indefinitely, and positive
+numbers for the number of seconds (45 by default) before dismissing the toast.
+Failure notifications are scoped per build/command, so rerunning the same job,
+letting a watcher (like VimTeX's continuous `latexmk`) kick off another cycle,
+or simply finishing successfully immediately clears the stale error. Clearing a
+toast never prunes Snacks' history viewer, so you can still audit prior errors
+while unrelated tasks keep their own entries.
 Toggle it ad-hoc via `:VimtexOutputToggleFollow` (or
 `require("output-panel").toggle_follow()`). `max_lines` trims the scratch buffer
 so very chatty commands never retain more than the configured line count, and

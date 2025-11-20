@@ -52,12 +52,19 @@ local default_config = {
   notifications = {
     enabled = true,
     title = "VimTeX",
-    persist_failure = true,
+    -- Set to false to disable persistence, 0/-1 (or true) to keep failures
+    -- until the next update, or a positive number of seconds (default 45)
+    -- before the notification auto-dismisses.
+    persist_failure = 45,
   },
   notifier = nil,
   border_highlight = "FloatBorder",
   follow = {
     enabled = true,
+  },
+  -- Frequency (milliseconds) for polling the log file while the panel is open
+  poll = {
+    interval = 150,
   },
   max_lines = 4000,
   open_on_error = true,
@@ -95,11 +102,135 @@ local state = {
   last_close_reason = nil,
   augroup = nil,
   notify = nil,
-  failure_notification = nil,
+  failure_notifications = {},
   running_notified = false,
   active_config = nil,
   job = nil,
 }
+
+-- Attempt to dismiss a previously shown notification entry regardless of the
+-- backend. Prefers any backend-provided `hide` callback, then falls back to
+-- conventional handle methods and finally to `vim.notify.dismiss`.
+local function dismiss_notification_entry(entry)
+  if not entry then
+    return
+  end
+  if entry.dismiss then
+    local ok = pcall(entry.dismiss, entry.handle)
+    if ok then
+      return
+    end
+  end
+  local handle = entry.handle
+  if type(handle) == "table" then
+    if type(handle.dismiss) == "function" then
+      local ok = pcall(handle.dismiss, handle)
+      if ok then
+        return
+      end
+    end
+    if type(handle.close) == "function" then
+      local ok = pcall(handle.close, handle)
+      if ok then
+        return
+      end
+    end
+    if handle.win and vim.api.nvim_win_is_valid(handle.win) then
+      pcall(vim.api.nvim_win_close, handle.win, true)
+      return
+    end
+  end
+  local ok, dismiss = pcall(function()
+    if not vim.notify then
+      return nil
+    end
+    return vim.notify.dismiss
+  end)
+  if ok and type(dismiss) == "function" then
+    pcall(dismiss, { pending = false, silent = true })
+  end
+end
+
+-- Return the saved failure notification entry for a given scope so callers can
+-- inspect and dismiss only the relevant toast without touching other builds.
+local function failure_notification_entry(scope)
+  if not scope then
+    return nil
+  end
+  return state.failure_notifications[scope]
+end
+
+-- Generate a scoped key to associate notifications with either command jobs or
+-- VimTeX builds so unrelated events never clear each other's status toasts.
+local function failure_scope_key(kind, identifier)
+  if identifier and identifier ~= "" then
+    return string.format("%s:%s", kind, identifier)
+  end
+  return kind
+end
+
+-- Capture the active command job scope using its user-facing title so reruns of
+-- the same workflow share a consistent identifier regardless of temp files.
+local function command_failure_scope(job)
+  if not job then
+    return failure_scope_key("command", "unknown")
+  end
+  return failure_scope_key("command", job.title or job.window_title or "unknown")
+end
+
+-- Capture the VimTeX build scope via the compiler output path so consecutive
+-- builds for the same project share a consistent identifier.
+local function vimtex_failure_scope(target)
+  return failure_scope_key("vimtex", target or state.target or "vimtex")
+end
+
+-- Clear the persistent failure notification for a scope so reruns or success
+-- updates stop showing stale errors without disturbing notifier history.
+local function clear_failure_notification(scope)
+  local entry = failure_notification_entry(scope)
+  if not entry then
+    return false
+  end
+  dismiss_notification_entry(entry)
+  state.failure_notifications[scope] = nil
+  return true
+end
+
+-- Interpret persist_failure config values (-1/0/true for indefinite persistence,
+-- positive numbers for auto-dismiss seconds, false to disable) and attach the
+-- requested duration. Snacks' notifier expects `keep` to be a callback, so we
+-- only rely on timeout semantics that both snacks.nvim and vim.notify support
+-- to avoid type mismatches.
+local function failure_notification_options(notifications, scope)
+  local failure_opts = {}
+  local entry = failure_notification_entry(scope)
+  if entry then
+    -- Dismiss the previous failure immediately so only the most recent toast is
+    -- visible while still leaving a breadcrumb inside Snacks' history views.
+    dismiss_notification_entry(entry)
+    state.failure_notifications[scope] = nil
+  end
+  local persist = notifications and notifications.persist_failure
+  if persist == nil then
+    persist = default_config.notifications.persist_failure
+  end
+  if persist == false then
+    return failure_opts
+  end
+  if persist == true then
+    persist = 0
+  end
+  if type(persist) == "number" then
+    if persist <= 0 then
+      failure_opts.timeout = false
+    else
+      failure_opts.timeout = persist * 1000
+    end
+    return failure_opts
+  end
+  failure_opts.timeout = false
+  return failure_opts
+end
 
 local function current_config()
   return state.active_config or config
@@ -155,7 +286,12 @@ local function notifier()
   local cfg = current_config()
   -- Use custom notifier if provided in config
   if cfg.notifier then
-    state.notify = cfg.notifier
+    if type(cfg.notifier) == "table" then
+      state.notify = vim.tbl_deep_extend("force", {}, cfg.notifier)
+      state.notify.backend = state.notify.backend or "custom"
+    else
+      state.notify = cfg.notifier
+    end
     return state.notify
   end
   -- Fallback to the shared helper so snacks/vim.notify auto-detection stays in sync with knit.run
@@ -175,11 +311,16 @@ local function notify(level, msg, opts)
   if not opts.title then
     opts.title = notifications.title or "VimTeX"
   end
-  local handler = notifier()[level]
+  local backend = notifier()
+  local handler = backend[level]
   if handler then
     local ok, result = pcall(handler, msg, opts)
     if ok then
-      return result
+      return {
+        backend = backend.backend or "custom",
+        handle = result,
+        dismiss = backend.hide,
+      }
     end
   end
   return nil
@@ -508,6 +649,15 @@ local function update_buffer_from_file(force)
   return true
 end
 
+-- Resolve the polling interval for log refreshes (in milliseconds). Users can
+-- lower it for snappier updates or raise it to reduce timer churn.
+local function poll_interval_ms()
+  local cfg = current_config()
+  local poll = cfg.poll or {}
+  local interval = poll.interval or 150
+  return math.max(16, interval)
+end
+
 -- Keep a lightweight polling loop running while the overlay is visible so the
 -- buffer stays in sync with latexmk's stdout and the title timer keeps
 -- updating. The timer exits automatically when the floating window disappears
@@ -519,7 +669,7 @@ local function start_polling()
   end
   local timer = uv.new_timer()
   state.timer = timer
-  timer:start(0, 250, function()
+  timer:start(0, poll_interval_ms(), function()
     vim.schedule(function()
       local win_open = state.win and vim.api.nvim_win_is_valid(state.win)
       if not win_open then
@@ -908,6 +1058,7 @@ function M.run(opts)
 
   if opts.notify_start ~= false then
     local start_message = opts.start or opts.start_message or (job_title .. " started…")
+    clear_failure_notification(command_failure_scope(state.job))
     notify("info", start_message)
   end
 
@@ -974,8 +1125,11 @@ function M.run(opts)
       if window_exists then
         schedule_hide(cfg.auto_hide and cfg.auto_hide.delay)
       end
-      notify("info", (opts.success or (job_title .. " finished")) .. format_duration_suffix())
-      state.failure_notification = nil
+      clear_failure_notification(command_failure_scope(state.job))
+      notify(
+        "info",
+        (opts.success or (job_title .. " finished")) .. format_duration_suffix()
+      )
     else
       state.status = "failure"
       state.border_hl = "DiagnosticError"
@@ -983,15 +1137,16 @@ function M.run(opts)
       if open_panel or window_exists or cfg.open_on_error ~= false then
         render_window({ target = log_path, focus = state.focused, border_hl = state.border_hl })
       end
-      local failure_opts = { replace = state.failure_notification }
       local notifications = cfg.notifications or {}
-      if notifications.persist_failure ~= false then
-        failure_opts.timeout = false
-        failure_opts.keep = true
-      end
+      local failure_scope = command_failure_scope(state.job)
+      local failure_opts = failure_notification_options(notifications, failure_scope)
       local failure_message = opts.error or (job_title .. " failed")
-      state.failure_notification =
+      local failure_entry =
         notify("error", failure_message .. format_duration_suffix(), failure_opts)
+      if failure_entry then
+        failure_entry.scope = failure_scope
+        state.failure_notifications[failure_scope] = failure_entry
+      end
     end
     if opts.on_exit then
       opts.on_exit(obj)
@@ -1085,6 +1240,7 @@ local function on_compile_started(event)
   state.job = nil
   local cfg = current_config()
   local ctx = event_context(event)
+  local failure_scope = vimtex_failure_scope(ctx.target)
   local already_running = state.status == "running"
   -- Only reset timer on the first compile event (not subsequent recompiles)
   if not already_running then
@@ -1108,6 +1264,7 @@ local function on_compile_started(event)
     })
   end
   if not state.running_notified then
+    clear_failure_notification(failure_scope)
     notify("info", "LaTeX build started…")
     state.running_notified = true
   end
@@ -1122,6 +1279,7 @@ local function on_compile_succeeded(event)
   end
   local cfg = current_config()
   local ctx = event_context(event)
+  local failure_scope = vimtex_failure_scope(ctx.target)
   local elapsed = elapsed_seconds()
   state.elapsed = elapsed
   state.started_at = nil
@@ -1139,12 +1297,8 @@ local function on_compile_succeeded(event)
     schedule_hide(cfg.auto_hide and cfg.auto_hide.delay)
   end
   -- Replace previous failure notification if one exists
-  local notify_opts
-  if state.failure_notification then
-    notify_opts = { replace = state.failure_notification }
-  end
-  notify("info", "LaTeX build finished" .. format_duration_suffix(), notify_opts)
-  state.failure_notification = nil
+  clear_failure_notification(failure_scope)
+  notify("info", "LaTeX build finished" .. format_duration_suffix())
 end
 
 -- Handle VimTeX compilation failure event (VimtexEventCompileFailed).
@@ -1174,15 +1328,14 @@ local function on_compile_failed(event)
   end
   -- Show persistent failure notification (if configured) so it stays visible until next success
   local notifications = cfg.notifications or {}
-  local failure_opts = {
-    replace = state.failure_notification,
-  }
-  if notifications.persist_failure ~= false then
-    failure_opts.timeout = false -- Don't auto-dismiss
-    failure_opts.keep = true -- Keep in notification history
-  end
-  state.failure_notification =
+  local failure_scope = vimtex_failure_scope(ctx.target)
+  local failure_opts = failure_notification_options(notifications, failure_scope)
+  local failure_entry =
     notify("error", "LaTeX build failed" .. format_duration_suffix(), failure_opts)
+  if failure_entry then
+    failure_entry.scope = failure_scope
+    state.failure_notifications[failure_scope] = failure_entry
+  end
 end
 
 local function on_compile_stopped()
@@ -1258,7 +1411,7 @@ function M.setup(opts)
   assign_config(merged)
   set_active_config(nil)
   state.border_hl = current_config().border_highlight or "FloatBorder"
-  state.failure_notification = nil
+  state.failure_notifications = {}
   state.running_notified = false
   setup_autocmds()
   setup_commands()

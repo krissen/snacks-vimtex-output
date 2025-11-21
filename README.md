@@ -274,8 +274,7 @@ This applies everywhere—VimTeX events and manual command runs.
 - Increase `mini.height_ratio` or `mini.height_max` if your commands are chatty.
 - Bump `scrolloff_margin` if the mini panel covers your cursor.
 - The mini overlay will flip to the opposite edge if it would hide your cursor.
-  Disable this by setting `mini.avoid_cursor = false` if you prefer it to stay put.
-  near the start or end of a buffer.
+  Disable this by setting `mini.avoid_cursor = false` if you prefer it to stay put near the start or end of a buffer.
 - Tune `mini.flip_row_offset` if you want a different gap when the overlay flips
   to the opposite edge (defaults to no gap when flipped).
 - Set `auto_open.enabled = true` to auto-pop the panel whenever VimTeX begins

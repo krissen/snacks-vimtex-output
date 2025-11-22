@@ -88,6 +88,7 @@ end
 local state = {
   win = nil,
   buf = nil,
+  buffer_targets = {},
   hide_token = 0,
   started_at = nil,
   elapsed = nil,
@@ -112,6 +113,32 @@ local state = {
   active_config = nil,
   job = nil,
 }
+
+-- Normalize any path to its absolute form so buffer mappings remain consistent
+-- even when callers provide relative paths.
+local function normalized_path(path)
+  if not path or path == "" then
+    return nil
+  end
+  return vim.fn.fnamemodify(path, ":p")
+end
+
+-- Associate a buffer with the normalized output path it owns so buffer switches
+-- can retarget the panel without guessing. The kind flag annotates the source
+-- (e.g. vimtex, overseer, command) for future routing decisions.
+local function remember_buffer_target(bufnr, target, kind)
+  if not bufnr or bufnr <= 0 then
+    return
+  end
+  local normalized = normalized_path(target)
+  if not normalized then
+    return
+  end
+  local entry = state.buffer_targets[bufnr] or {}
+  entry.target = normalized
+  entry.kind = kind or entry.kind
+  state.buffer_targets[bufnr] = entry
+end
 
 -- Clear any active scrolloff guard autocmds and stop enforcing the minimum scrolloff requirement.
 local function clear_scrolloff_guard()
@@ -562,13 +589,6 @@ local function schedule_hide(delay)
   end, hide_delay)
 end
 
-local function normalized_path(path)
-  if not path or path == "" then
-    return nil
-  end
-  return vim.fn.fnamemodify(path, ":p")
-end
-
 local function compiler_output_path(bufnr)
   local vt
   if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
@@ -599,20 +619,48 @@ end
 local function resolve_target(path, source_buf)
   local normalized = set_target(path)
   if normalized then
+    remember_buffer_target(source_buf, normalized, (state.job and state.job.kind) or "command")
     return normalized
   end
   local from_source = compiler_output_path(source_buf)
   if from_source then
-    return set_target(from_source)
+    local resolved = set_target(from_source)
+    remember_buffer_target(source_buf, resolved, "vimtex")
+    return resolved
   end
   if state.target then
     return state.target
   end
   local current = compiler_output_path()
   if current then
-    return set_target(current)
+    local resolved = set_target(current)
+    remember_buffer_target(vim.api.nvim_get_current_buf(), resolved, "vimtex")
+    return resolved
   end
   return nil
+end
+
+-- Look up the output target associated with a buffer. Prefers explicit mappings
+-- recorded when jobs start, then falls back to VimTeX compiler paths to
+-- populate a new mapping on demand.
+local function buffer_target_for(bufnr)
+  if not bufnr or bufnr <= 0 then
+    return nil
+  end
+  if state.buf and bufnr == state.buf then
+    return nil
+  end
+  local tracked = state.buffer_targets[bufnr]
+  if tracked and tracked.target then
+    return tracked
+  end
+  local compiler_target = compiler_output_path(bufnr)
+  if not compiler_target then
+    return nil
+  end
+  local inferred = { target = compiler_target, kind = "vimtex" }
+  state.buffer_targets[bufnr] = inferred
+  return inferred
 end
 
 -- Ensure a reusable scratch buffer exists so the panel can reopen previous output on demand.
@@ -1210,6 +1258,8 @@ local function create_stream_session(opts)
     return nil
   end
 
+  local source_buf = opts.source_buf or vim.api.nvim_get_current_buf()
+
   set_active_config(nil)
   local overrides
   local base_profiles = config.profiles or {}
@@ -1248,6 +1298,7 @@ local function create_stream_session(opts)
 
   stop_polling()
   set_target(log_path)
+  remember_buffer_target(source_buf, log_path, opts.kind or "command")
   state.job = {
     kind = opts.kind or "command",
     active = true,
@@ -1256,6 +1307,7 @@ local function create_stream_session(opts)
     log_path = log_path,
     log_handle = handle,
     profile = opts.profile,
+    source_buf = source_buf,
   }
   state.status = "running"
   state.started_at = current_time()
@@ -1543,8 +1595,51 @@ local function event_context(event)
   local target = compiler_output_path(buf)
   if target then
     set_target(target)
+    remember_buffer_target(buf, target, "vimtex")
   end
   return { target = target or state.target, source_buf = buf }
+end
+
+-- Retarget the panel when entering a buffer that owns a known output stream so
+-- users can swap between VimTeX projects or other runners without restarting
+-- jobs. Falls back to the previous buffer's output when the new buffer has no
+-- mapping.
+local function on_buf_enter(event)
+  local bufnr = event and event.buf or nil
+  if not bufnr or bufnr <= 0 then
+    return
+  end
+  local target_entry = buffer_target_for(bufnr)
+  if not target_entry or not target_entry.target then
+    return
+  end
+  if state.target == target_entry.target then
+    return
+  end
+  set_target(target_entry.target)
+  remember_buffer_target(bufnr, target_entry.target, target_entry.kind)
+  local window_exists = state.win and vim.api.nvim_win_is_valid(state.win)
+  if window_exists then
+    local polling = state.status == "running" or (state.job and state.job.active)
+    render_window({
+      target = target_entry.target,
+      source_buf = bufnr,
+      poll = polling,
+      focus = state.focused,
+    })
+  else
+    ensure_output_ready({ target = target_entry.target, source_buf = bufnr, quiet = true })
+  end
+end
+
+-- Drop stale buffer-to-target links when buffers are wiped to avoid leaking
+-- mappings across new files that reuse the same bufnr.
+local function on_buf_wipeout(event)
+  local bufnr = event and event.buf or nil
+  if not bufnr or bufnr <= 0 then
+    return
+  end
+  state.buffer_targets[bufnr] = nil
 end
 
 -- Handle VimTeX compilation start events (VimtexEventCompiling, VimtexEventCompileStarted).
@@ -1701,6 +1796,14 @@ local function setup_autocmds()
     group = group,
     pattern = "VimtexEventCompileStopped",
     callback = on_compile_stopped,
+  })
+  vim.api.nvim_create_autocmd("BufEnter", {
+    group = group,
+    callback = on_buf_enter,
+  })
+  vim.api.nvim_create_autocmd({ "BufWipeout", "BufUnload" }, {
+    group = group,
+    callback = on_buf_wipeout,
   })
 end
 

@@ -179,7 +179,7 @@ current buffer while showing build output in the floating overlay.
 ```vim
 :Make          " Run makeprg and show output in panel
 :Make clean    " Pass arguments to makeprg
-:Make!         " Run without jumping to errors (same as :Make)
+:Make!         " Bang variant works the same way
 ```
 
 You can also call it programmatically:
@@ -213,13 +213,14 @@ built-in `:make` command.
 
 ```lua
 local panel = require("output-panel")
-panel.show()          -- open panel for the current target
-panel.hide()          -- hide panel
-panel.toggle()        -- toggle visibility
-panel.toggle_follow() -- toggle follow/tail mode
-panel.toggle_focus()  -- swap between mini/focus layouts
-panel.run({...})      -- run arbitrary commands (see above)
-panel.make(args)      -- run :make with optional arguments
+panel.show()                    -- open panel for the current target
+panel.hide()                    -- hide panel
+panel.toggle()                  -- toggle visibility
+panel.toggle_follow()           -- toggle follow/tail mode
+panel.toggle_focus()            -- swap between mini/focus layouts
+panel.run({...})                -- run arbitrary commands (see above)
+panel.make(args)                -- run :make with optional arguments
+panel.adapter_enabled("name")   -- check if an adapter/profile is enabled
 ```
 
 ## Configuration
@@ -282,13 +283,22 @@ require("output-panel").setup({
   open_on_error = true,
   notifier = nil,
   profiles = {
+    vimtex = {
+      enabled = true,
+      notifications = { title = "VimTeX" },
+    },
+    overseer = {
+      enabled = true,
+      notifications = { title = "Overseer" },
+    },
+    make = {
+      enabled = true,
+      notifications = { title = "Make" },
+      auto_hide = { enabled = true },
+    },
     knit = {
       notifications = { title = "Knit" },
       auto_hide = { enabled = false },
-    },
-    make = {
-      notifications = { title = "Make" },
-      auto_hide = { enabled = true },
     },
   },
 })
@@ -322,6 +332,29 @@ Profiles are arbitrary tables merged into the active configuration whenever you
 call `run({ profile = "name" })`. Use them to change the notification title,
 auto-hide behaviour, or window layout for a specific workflow without touching
 other commands.
+
+All profiles (including built-in adapters like `vimtex`, `overseer`, and `make`)
+support an `enabled` field that allows you to temporarily disable an adapter or
+profile without removing its configuration:
+
+```lua
+require("output-panel").setup({
+  profiles = {
+    vimtex = {
+      enabled = false,  -- Disable VimTeX adapter
+    },
+    make = {
+      enabled = true,   -- Keep Make adapter enabled (default)
+      notifications = { title = "Build" },
+    },
+    my_custom_profile = {
+      enabled = false,  -- Disable custom profile temporarily
+      notifications = { title = "Custom Task" },
+      auto_hide = { enabled = false },
+    },
+  },
+})
+```
 
 You can also bypass profiles and pass `config = { ... }` directly to `run()` for
 one-off overrides.

@@ -72,7 +72,16 @@ local default_config = {
   max_lines = 4000,
   open_on_error = true,
   profiles = {
+    vimtex = {
+      enabled = true,
+      notifications = { title = "VimTeX" },
+    },
+    overseer = {
+      enabled = true,
+      notifications = { title = "Overseer" },
+    },
     make = {
+      enabled = true,
       notifications = { title = "Make" },
       auto_hide = { enabled = true },
     },
@@ -333,6 +342,22 @@ end
 
 local function current_config()
   return state.active_config or config
+end
+
+-- Check if a specific adapter or profile is enabled in the configuration.
+-- All profiles (built-in adapters and user-defined) can have an `enabled` field.
+-- This allows users to temporarily disable adapters/profiles without removing their configuration.
+-- Returns true if enabled or if no profile config exists (default enabled).
+local function adapter_enabled(adapter_name)
+  local cfg = current_config()
+  if not cfg.profiles then
+    return true
+  end
+  local profile = cfg.profiles[adapter_name]
+  if not profile then
+    return true
+  end
+  return profile.enabled ~= false
 end
 
 local function set_active_config(overrides)
@@ -1476,6 +1501,15 @@ function M.toggle_focus()
   render_window({ focus = not state.focused })
 end
 
+---Check if a specific adapter or profile is enabled.
+---All profiles (built-in adapters and user-defined) can have an `enabled` field.
+---This allows users to temporarily disable adapters/profiles without removing their configuration.
+---@param adapter_name string The name of the adapter or profile (e.g., "vimtex", "overseer", "make", or any user-defined profile)
+---@return boolean
+function M.adapter_enabled(adapter_name)
+  return adapter_enabled(adapter_name)
+end
+
 ---Start a streaming session that external runners can feed with output.
 ---@param opts table
 ---@return table|nil
@@ -1651,6 +1685,9 @@ end
 -- Handle VimTeX adapter compilation start events (VimtexEventCompiling, VimtexEventCompileStarted).
 -- Transitions state to "running", starts the timer if needed, and shows the overlay if configured.
 local function on_compile_started(event)
+  if not adapter_enabled("vimtex") then
+    return
+  end
   if command_job_active() then
     return
   end
@@ -1691,6 +1728,9 @@ end
 -- Stops polling, transitions to "success" state, updates border to green, and schedules auto-hide.
 -- Replaces any previous failure notification with a success message.
 local function on_compile_succeeded(event)
+  if not adapter_enabled("vimtex") then
+    return
+  end
   if command_job_active() then
     return
   end
@@ -1722,6 +1762,9 @@ end
 -- Stops polling, transitions to "failure" state, updates border to red, and shows persistent notification.
 -- The overlay stays visible (auto-hide is cancelled) so the user can inspect the error log.
 local function on_compile_failed(event)
+  if not adapter_enabled("vimtex") then
+    return
+  end
   if command_job_active() then
     return
   end
@@ -1778,31 +1821,36 @@ local function setup_autocmds()
   end
   local group = vim.api.nvim_create_augroup("snacks_vimtex_output", { clear = true })
   state.augroup = group
-  vim.api.nvim_create_autocmd("User", {
-    group = group,
-    pattern = "VimtexEventCompiling",
-    callback = on_compile_started,
-  })
-  vim.api.nvim_create_autocmd("User", {
-    group = group,
-    pattern = "VimtexEventCompileStarted",
-    callback = on_compile_started,
-  })
-  vim.api.nvim_create_autocmd("User", {
-    group = group,
-    pattern = "VimtexEventCompileSuccess",
-    callback = on_compile_succeeded,
-  })
-  vim.api.nvim_create_autocmd("User", {
-    group = group,
-    pattern = "VimtexEventCompileFailed",
-    callback = on_compile_failed,
-  })
-  vim.api.nvim_create_autocmd("User", {
-    group = group,
-    pattern = "VimtexEventCompileStopped",
-    callback = on_compile_stopped,
-  })
+
+  -- Only set up VimTeX event handlers if the vimtex adapter is enabled
+  if adapter_enabled("vimtex") then
+    vim.api.nvim_create_autocmd("User", {
+      group = group,
+      pattern = "VimtexEventCompiling",
+      callback = on_compile_started,
+    })
+    vim.api.nvim_create_autocmd("User", {
+      group = group,
+      pattern = "VimtexEventCompileStarted",
+      callback = on_compile_started,
+    })
+    vim.api.nvim_create_autocmd("User", {
+      group = group,
+      pattern = "VimtexEventCompileSuccess",
+      callback = on_compile_succeeded,
+    })
+    vim.api.nvim_create_autocmd("User", {
+      group = group,
+      pattern = "VimtexEventCompileFailed",
+      callback = on_compile_failed,
+    })
+    vim.api.nvim_create_autocmd("User", {
+      group = group,
+      pattern = "VimtexEventCompileStopped",
+      callback = on_compile_stopped,
+    })
+  end
+
   vim.api.nvim_create_autocmd("BufEnter", {
     group = group,
     callback = on_buf_enter,
@@ -1817,6 +1865,11 @@ end
 -- This adapter replaces the default :make behavior to keep the user in their buffer
 -- while showing build output in the floating overlay.
 local function execute_make(args, bang)
+  if not adapter_enabled("make") then
+    notify("warn", "Make adapter is disabled. Enable it in setup with profiles.make.enabled = true")
+    return
+  end
+
   -- Retrieve makeprg from the current buffer's options
   local makeprg = vim.api.nvim_get_option_value("makeprg", { buf = 0 })
 
@@ -1846,7 +1899,7 @@ local function execute_make(args, bang)
     success = "Build finished",
     error = "Build failed",
     start = "Building…",
-    -- Don't jump to errors when using :make! (bang variant)
+    -- Don't open in focus mode - keep user in their buffer
     focus = false,
   })
 end

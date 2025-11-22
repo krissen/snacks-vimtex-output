@@ -38,16 +38,20 @@ panel automatically tracks their logs alongside any command you run manually.
 ## Adapters
 
 The core plugin never requires VimTeX or Overseer; it shows whatever you stream
-into it. Two adapters ship in-tree to make that effortless when those plugins
+into it. Three adapters ship in-tree to make that effortless when those plugins
 are present:
 
 - **VimTeX adapter** – Listens for compile events, tails the compiler output,
   and reuses the same panel commands used for ad-hoc runs.
 - **Overseer adapter** – An Overseer component (`output_panel`) that mirrors task
   output into the panel and reuses your configured profiles/notifications.
+- **Make adapter** – Provides a `:Make` command that runs Neovim's `makeprg` and
+  streams output into the panel instead of the quickfix list.
 
-Both adapters activate automatically if their host plugin loads; if not
-installed, the panel still works as a standalone command runner.
+The VimTeX and Overseer adapters activate automatically if their host plugin
+loads. The Make adapter is always available and can be used with any project
+that has a `makeprg` configured. If VimTeX and Overseer aren't installed, the
+panel still works as a standalone command runner.
 
 ## Installation
 
@@ -166,6 +170,45 @@ error notifications. Switching buffers retargets the window to whatever log is
 active (VimTeX project, Overseer task, or manual command). Buffers without an
 associated job leave the current output in place, avoiding unnecessary flicker.
 
+### Make adapter
+
+The plugin provides a `:Make` command that runs Neovim's `makeprg` and streams
+the output into the panel instead of the quickfix list. This keeps you in your
+current buffer while showing build output in the floating overlay.
+
+```vim
+:Make          " Run makeprg and show output in panel
+:Make clean    " Pass arguments to makeprg
+:Make!         " Run without jumping to errors (same as :Make)
+```
+
+You can also call it programmatically:
+
+```lua
+local panel = require("output-panel")
+panel.make()           -- Run makeprg
+panel.make("clean")    -- Run with arguments
+```
+
+The Make adapter uses the "make" profile by default, which you can customize in
+your configuration:
+
+```lua
+require("output-panel").setup({
+  profiles = {
+    make = {
+      notifications = { title = "Build" },
+      auto_hide = { enabled = true },
+      -- other config overrides...
+    },
+  },
+})
+```
+
+The adapter respects your buffer's `makeprg` setting and runs in the buffer's
+directory. It supports the `$*` placeholder for arguments just like Neovim's
+built-in `:make` command.
+
 ### API helpers
 
 ```lua
@@ -176,6 +219,7 @@ panel.toggle()        -- toggle visibility
 panel.toggle_follow() -- toggle follow/tail mode
 panel.toggle_focus()  -- swap between mini/focus layouts
 panel.run({...})      -- run arbitrary commands (see above)
+panel.make(args)      -- run :make with optional arguments
 ```
 
 ## Configuration
@@ -241,6 +285,10 @@ require("output-panel").setup({
     knit = {
       notifications = { title = "Knit" },
       auto_hide = { enabled = false },
+    },
+    make = {
+      notifications = { title = "Make" },
+      auto_hide = { enabled = true },
     },
   },
 })

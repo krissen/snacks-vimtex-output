@@ -71,7 +71,12 @@ local default_config = {
   },
   max_lines = 4000,
   open_on_error = true,
-  profiles = {},
+  profiles = {
+    make = {
+      notifications = { title = "Make" },
+      auto_hide = { enabled = true },
+    },
+  },
 }
 
 local config = vim.deepcopy(default_config)
@@ -1808,6 +1813,49 @@ local function setup_autocmds()
   })
 end
 
+-- Execute a :make command by running the makeprg and streaming output to the panel.
+-- This adapter replaces the default :make behavior to keep the user in their buffer
+-- while showing build output in the floating overlay.
+local function execute_make(args, bang)
+  -- Retrieve makeprg from the current buffer's options
+  local makeprg = vim.api.nvim_get_option_value("makeprg", { buf = 0 })
+
+  -- If makeprg contains $*, replace it with the provided arguments
+  -- Otherwise, append arguments to the command
+  local cmd
+  if makeprg:find("%$%*") then
+    cmd = makeprg:gsub("%$%*", args or "")
+  else
+    if args and args ~= "" then
+      cmd = makeprg .. " " .. args
+    else
+      cmd = makeprg
+    end
+  end
+
+  -- Get the current buffer's directory for cwd
+  local buf_dir = vim.fn.expand("%:p:h")
+
+  -- Run the command through the panel
+  M.run({
+    cmd = cmd,
+    cwd = buf_dir,
+    profile = "make",
+    title = "Make",
+    window_title = "Make",
+    success = "Build finished",
+    error = "Build failed",
+    start = "Building…",
+    -- Don't jump to errors when using :make! (bang variant)
+    focus = false,
+  })
+end
+
+-- Exposed API function to run :make programmatically
+function M.make(args, bang)
+  execute_make(args or "", bang or false)
+end
+
 local function setup_commands()
   -- Provide generic commands plus VimTeX-prefixed aliases for backwards compatibility.
   local commands = {
@@ -1830,6 +1878,16 @@ local function setup_commands()
       fn()
     end, {})
   end
+
+  -- Override :make and :make! to use the output panel adapter
+  pcall(vim.api.nvim_del_user_command, "Make")
+  vim.api.nvim_create_user_command("Make", function(cmd_opts)
+    execute_make(cmd_opts.args, cmd_opts.bang)
+  end, {
+    nargs = "*",
+    bang = true,
+    desc = "Run make command and show output in panel",
+  })
 end
 
 function M.setup(opts)

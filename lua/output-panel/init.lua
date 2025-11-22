@@ -114,6 +114,15 @@ local state = {
   job = nil,
 }
 
+-- Normalize any path to its absolute form so buffer mappings remain consistent
+-- even when callers provide relative paths.
+local function normalized_path(path)
+  if not path or path == "" then
+    return nil
+  end
+  return vim.fn.fnamemodify(path, ":p")
+end
+
 -- Associate a buffer with the normalized output path it owns so buffer switches
 -- can retarget the panel without guessing. The kind flag annotates the source
 -- (e.g. vimtex, overseer, command) for future routing decisions.
@@ -578,13 +587,6 @@ local function schedule_hide(delay)
       close_window({ reason = "auto_success" })
     end
   end, hide_delay)
-end
-
-local function normalized_path(path)
-  if not path or path == "" then
-    return nil
-  end
-  return vim.fn.fnamemodify(path, ":p")
 end
 
 local function compiler_output_path(bufnr)

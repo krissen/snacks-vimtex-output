@@ -38,16 +38,20 @@ panel automatically tracks their logs alongside any command you run manually.
 ## Adapters
 
 The core plugin never requires VimTeX or Overseer; it shows whatever you stream
-into it. Two adapters ship in-tree to make that effortless when those plugins
+into it. Three adapters ship in-tree to make that effortless when those plugins
 are present:
 
 - **VimTeX adapter** – Listens for compile events, tails the compiler output,
   and reuses the same panel commands used for ad-hoc runs.
 - **Overseer adapter** – An Overseer component (`output_panel`) that mirrors task
   output into the panel and reuses your configured profiles/notifications.
+- **Make adapter** – Provides a `:Make` command that runs Neovim's `makeprg` and
+  streams output into the panel instead of the quickfix list.
 
-Both adapters activate automatically if their host plugin loads; if not
-installed, the panel still works as a standalone command runner.
+The VimTeX and Overseer adapters activate automatically if their host plugin
+loads. The Make adapter is always available and can be used with any project
+that has a `makeprg` configured. If VimTeX and Overseer aren't installed, the
+panel still works as a standalone command runner.
 
 ## Installation
 
@@ -166,16 +170,57 @@ error notifications. Switching buffers retargets the window to whatever log is
 active (VimTeX project, Overseer task, or manual command). Buffers without an
 associated job leave the current output in place, avoiding unnecessary flicker.
 
+### Make adapter
+
+The plugin provides a `:Make` command that runs Neovim's `makeprg` and streams
+the output into the panel instead of the quickfix list. This keeps you in your
+current buffer while showing build output in the floating overlay.
+
+```vim
+:Make          " Run makeprg and show output in panel
+:Make clean    " Pass arguments to makeprg
+:Make!         " Bang variant works the same way
+```
+
+You can also call it programmatically:
+
+```lua
+local panel = require("output-panel")
+panel.make()           -- Run makeprg
+panel.make("clean")    -- Run with arguments
+```
+
+The Make adapter uses the "make" profile by default, which you can customize in
+your configuration:
+
+```lua
+require("output-panel").setup({
+  profiles = {
+    make = {
+      notifications = { title = "Build" },
+      auto_hide = { enabled = true },
+      -- other config overrides...
+    },
+  },
+})
+```
+
+The adapter respects your buffer's `makeprg` setting and runs in the buffer's
+directory. It supports the `$*` placeholder for arguments just like Neovim's
+built-in `:make` command.
+
 ### API helpers
 
 ```lua
 local panel = require("output-panel")
-panel.show()          -- open panel for the current target
-panel.hide()          -- hide panel
-panel.toggle()        -- toggle visibility
-panel.toggle_follow() -- toggle follow/tail mode
-panel.toggle_focus()  -- swap between mini/focus layouts
-panel.run({...})      -- run arbitrary commands (see above)
+panel.show()                    -- open panel for the current target
+panel.hide()                    -- hide panel
+panel.toggle()                  -- toggle visibility
+panel.toggle_follow()           -- toggle follow/tail mode
+panel.toggle_focus()            -- swap between mini/focus layouts
+panel.run({...})                -- run arbitrary commands (see above)
+panel.make(args)                -- run :make with optional arguments
+panel.adapter_enabled("name")   -- check if an adapter/profile is enabled
 ```
 
 ## Configuration
@@ -238,6 +283,19 @@ require("output-panel").setup({
   open_on_error = true,
   notifier = nil,
   profiles = {
+    vimtex = {
+      enabled = true,
+      notifications = { title = "VimTeX" },
+    },
+    overseer = {
+      enabled = true,
+      notifications = { title = "Overseer" },
+    },
+    make = {
+      enabled = true,
+      notifications = { title = "Make" },
+      auto_hide = { enabled = true },
+    },
     knit = {
       notifications = { title = "Knit" },
       auto_hide = { enabled = false },
@@ -274,6 +332,29 @@ Profiles are arbitrary tables merged into the active configuration whenever you
 call `run({ profile = "name" })`. Use them to change the notification title,
 auto-hide behaviour, or window layout for a specific workflow without touching
 other commands.
+
+All profiles (including built-in adapters like `vimtex`, `overseer`, and `make`)
+support an `enabled` field that allows you to temporarily disable an adapter or
+profile without removing its configuration:
+
+```lua
+require("output-panel").setup({
+  profiles = {
+    vimtex = {
+      enabled = false,  -- Disable VimTeX adapter
+    },
+    make = {
+      enabled = true,   -- Keep Make adapter enabled (default)
+      notifications = { title = "Build" },
+    },
+    my_custom_profile = {
+      enabled = false,  -- Disable custom profile temporarily
+      notifications = { title = "Custom Task" },
+      auto_hide = { enabled = false },
+    },
+  },
+})
+```
 
 You can also bypass profiles and pass `config = { ... }` directly to `run()` for
 one-off overrides.

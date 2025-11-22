@@ -75,6 +75,15 @@ return {
         self.stream = nil
       end,
       on_start = function(self, task)
+        -- Check if the overseer adapter is enabled before streaming
+        if not panel.adapter_enabled("overseer") then
+          vim.notify(
+            "output-panel.nvim: Overseer adapter is disabled. Enable it with profiles.overseer.enabled = true",
+            vim.log.levels.WARN
+          )
+          return
+        end
+
         -- Begin streaming when Overseer launches the task. Respect panel
         -- profiles/config overrides so users can tailor the view per task.
         self.stream = panel.stream({

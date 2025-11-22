@@ -146,6 +146,10 @@ the panel.
 The overlay attaches to VimTeX's compiler log (usually the `latexmk` stdout
 buffer) and retains all prior behaviours—auto-open on compilation, optional
 auto-hide on success, green/red borders, and persistent error notifications.
+When you jump between buffers tied to different VimTeX projects, Overseer tasks,
+or command runs started via the panel, the window retargets itself to the
+new buffer's log. Buffers without an associated job leave the current output in
+place, avoiding unnecessary flicker.
 
 ### API helpers
 

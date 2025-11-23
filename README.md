@@ -266,6 +266,34 @@ The simpler `cnoreabbrev make Make` can cause unexpected behavior if `make` appe
 
 This way you keep your muscle memory but opt into the panel-based workflow.
 
+### Overseer adapter
+
+The Overseer adapter is **opt-in** and works differently from VimTeX and the Make
+helper. Instead of automatic event hooks or command wrappers, you explicitly add
+the `output_panel` component to tasks you want to stream.
+
+**Default Overseer behavior**: Tasks run normally without the output panel.
+
+**To use the output panel**: Include the `output_panel` component in your task
+components:
+
+```lua
+require("overseer").setup({
+  component_aliases = {
+    default = { "default", { "output_panel", open = true } },
+  },
+})
+```
+
+You can also attach it to individual tasks via `components = { "default",
+{ "output_panel", focus = false } }` when calling `overseer.run_template()`.
+
+**Control**: Use `profiles.overseer.enabled = false` to disable the component
+globally, even if added to tasks.
+
+This opt-in design preserves Overseer's default workflow while making it easy to
+route specific tasks to the output panel when desired.
+
 ### API helpers
 
 ```lua
@@ -725,33 +753,7 @@ but doing so typically requires authoring task definitions and tweaking layout
 settings—effort that outweighs the benefit when you only need a “fire-and-forget”
 pane.
 
-#### Streaming Overseer tasks into the panel
-
-The Overseer adapter is **opt-in** and works differently from VimTeX and the Make
-helper. Instead of automatic event hooks or command wrappers, you explicitly add
-the `output_panel` component to tasks you want to stream.
-
-**Default Overseer behavior**: Tasks run normally without the output panel.
-
-**To use the output panel**: Include the `output_panel` component in your task
-components:
-
-```lua
-require("overseer").setup({
-  component_aliases = {
-    default = { "default", { "output_panel", open = true } },
-  },
-})
-```
-
-You can also attach it to individual tasks via `components = { "default",
-{ "output_panel", focus = false } }` when calling `overseer.run_template()`.
-
-**Control**: Use `profiles.overseer.enabled = false` to disable the component
-globally, even if added to tasks.
-
-This opt-in design preserves Overseer's default workflow while making it easy to
-route specific tasks to the output panel when desired.
+See the "Overseer adapter" section in the Usage guide above for complete integration instructions.
 
 ### ToggleTerm and generic terminals
 

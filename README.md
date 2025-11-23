@@ -179,7 +179,7 @@ current buffer while showing build output in the floating overlay.
 ```vim
 :Make          " Run makeprg and show output in panel
 :Make clean    " Pass arguments to makeprg
-:Make!         " Bang variant works the same way
+:Make!         " Bang variant is accepted but has no special behavior
 ```
 
 You can also call it programmatically:

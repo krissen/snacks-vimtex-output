@@ -1685,9 +1685,6 @@ end
 -- Handle VimTeX adapter compilation start events (VimtexEventCompiling, VimtexEventCompileStarted).
 -- Transitions state to "running", starts the timer if needed, and shows the overlay if configured.
 local function on_compile_started(event)
-  if not adapter_enabled("vimtex") then
-    return
-  end
   if command_job_active() then
     return
   end
@@ -1728,9 +1725,6 @@ end
 -- Stops polling, transitions to "success" state, updates border to green, and schedules auto-hide.
 -- Replaces any previous failure notification with a success message.
 local function on_compile_succeeded(event)
-  if not adapter_enabled("vimtex") then
-    return
-  end
   if command_job_active() then
     return
   end
@@ -1762,9 +1756,6 @@ end
 -- Stops polling, transitions to "failure" state, updates border to red, and shows persistent notification.
 -- The overlay stays visible (auto-hide is cancelled) so the user can inspect the error log.
 local function on_compile_failed(event)
-  if not adapter_enabled("vimtex") then
-    return
-  end
   if command_job_active() then
     return
   end
@@ -1861,21 +1852,17 @@ local function setup_autocmds()
   })
 end
 
--- Execute a :make command by running the makeprg and streaming output to the panel.
--- This adapter replaces the default :make behavior to keep the user in their buffer
+-- Provides an alternative :Make command that runs the buffer's makeprg and streams output to the panel.
+-- This does not override the built-in :make; instead, it keeps the user in their buffer
 -- while showing build output in the floating overlay.
-local function execute_make(args, bang)
+local function execute_make(args)
   if not adapter_enabled("make") then
     notify("warn", "Make adapter is disabled. Enable it in setup with profiles.make.enabled = true")
     return
   end
 
-  -- Retrieve makeprg from the current buffer's options
+  -- Retrieve makeprg from the current buffer's options (defaults to "make" in Neovim)
   local makeprg = vim.api.nvim_get_option_value("makeprg", { buf = 0 })
-  if not makeprg or makeprg == "" then
-    notify("error", "No makeprg configured for this buffer")
-    return
-  end
 
   -- If makeprg contains $*, replace it with the provided arguments
   -- Otherwise, append arguments to the command
@@ -1890,8 +1877,11 @@ local function execute_make(args, bang)
     end
   end
 
-  -- Get the current buffer's directory for cwd
+  -- Get the current buffer's directory for cwd; fall back to cwd if buffer has no file path
   local buf_dir = vim.fn.expand("%:p:h")
+  if not buf_dir or buf_dir == "" then
+    buf_dir = vim.fn.getcwd()
+  end
 
   -- Run the command through the panel
   M.run({
@@ -1909,8 +1899,8 @@ local function execute_make(args, bang)
 end
 
 -- Exposed API function to run :make programmatically
-function M.make(args, bang)
-  execute_make(args or "", bang or false)
+function M.make(args)
+  execute_make(args or "")
 end
 
 local function setup_commands()
@@ -1936,10 +1926,10 @@ local function setup_commands()
     end, {})
   end
 
-  -- Override :make and :make! to use the output panel adapter
+  -- Provide :Make command as an alternative to Neovim's :make. Use :Make to show output in the panel.
   pcall(vim.api.nvim_del_user_command, "Make")
   vim.api.nvim_create_user_command("Make", function(cmd_opts)
-    execute_make(cmd_opts.args, cmd_opts.bang)
+    execute_make(cmd_opts.args)
   end, {
     nargs = "*",
     bang = true,

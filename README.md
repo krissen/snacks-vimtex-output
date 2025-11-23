@@ -2,10 +2,11 @@
 
 A configurable floating output window for Neovim jobs. The plugin focuses on
 keeping a single pane of live output available no matter how the work was
-started—ad-hoc shell commands, VimTeX builds, or Overseer tasks all feed into
-the same scratch buffer and share the same notification pipeline. VimTeX and
-Overseer act as **adapters**: they are fully optional, and when present the
-panel automatically tracks their logs alongside any command you run manually.
+started—ad-hoc shell commands, VimTeX builds, Neovim's built-in `:make`, or
+Overseer tasks all feed into the same scratch buffer and share the same
+notification pipeline. VimTeX and Overseer act as **adapters**: they are fully
+optional, and when present the panel automatically tracks their logs alongside
+any command you run manually.
 
 ## Requirements
 
@@ -38,16 +39,21 @@ panel automatically tracks their logs alongside any command you run manually.
 ## Adapters
 
 The core plugin never requires VimTeX or Overseer; it shows whatever you stream
-into it. Two adapters ship in-tree to make that effortless when those plugins
-are present:
+into it. Two plugin adapters and one built-in helper ship in-tree:
 
-- **VimTeX adapter** – Listens for compile events, tails the compiler output,
-  and reuses the same panel commands used for ad-hoc runs.
-- **Overseer adapter** – An Overseer component (`output_panel`) that mirrors task
-  output into the panel and reuses your configured profiles/notifications.
+- **VimTeX adapter** – Automatically hooks into VimTeX compile events when VimTeX
+  is loaded. Non-invasive: VimTeX commands continue to work normally, the panel
+  just displays the output.
+- **Overseer adapter** – Opt-in component (`output_panel`) that you add to tasks
+  you want to stream. Overseer works normally by default; you choose which tasks
+  use the panel.
+- **Make helper** – Provides a `:Make` command (capital M) that wraps Neovim's
+  built-in `makeprg` and streams output to the panel. The native `:make` command
+  remains unchanged; use `:Make` when you want panel output.
 
-Both adapters activate automatically if their host plugin loads; if not
-installed, the panel still works as a standalone command runner.
+All adapters and helpers can be disabled via `profiles.{name}.enabled = false`
+without removing their configuration. The panel also works standalone for running
+arbitrary commands without any adapter.
 
 ## Installation
 
@@ -166,16 +172,86 @@ error notifications. Switching buffers retargets the window to whatever log is
 active (VimTeX project, Overseer task, or manual command). Buffers without an
 associated job leave the current output in place, avoiding unnecessary flicker.
 
+#### How the VimTeX adapter works
+
+The VimTeX adapter automatically hooks into VimTeX compilation events when VimTeX
+is installed. It **does not replace** VimTeX's built-in commands or functionality
+— VimTeX continues to work normally. The adapter simply adds the output panel as
+an additional UI layer on top of VimTeX's compilation process.
+
+- **VimTeX commands**: Continue to work as normal (`:VimtexCompile`, etc.)
+- **Output panel**: Automatically shows VimTeX compilation output
+- **Control**: Use `profiles.vimtex.enabled = false` to disable the adapter
+
+The integration is non-invasive and can be toggled via the profile configuration
+without affecting VimTeX's core functionality.
+
+### Make helper
+
+The plugin provides a `:Make` command that wraps Neovim's built-in `makeprg` and
+streams the output into the panel instead of the quickfix list. This keeps you in
+your current buffer while showing build output in the floating overlay.
+
+```vim
+:Make          " Run makeprg and show output in panel
+:Make clean    " Pass arguments to makeprg
+```
+
+You can also call it programmatically:
+
+```lua
+local panel = require("output-panel")
+panel.make()           -- Run makeprg
+panel.make("clean")    -- Run with arguments
+```
+
+The Make helper uses the "make" profile by default, which you can customize in
+your configuration:
+
+```lua
+require("output-panel").setup({
+  profiles = {
+    make = {
+      notifications = { title = "Build" },
+      auto_hide = { enabled = true },
+      -- other config overrides...
+    },
+  },
+})
+```
+
+The helper respects your buffer's `makeprg` setting and runs in the buffer's
+directory. It supports the `$*` placeholder for arguments just like Neovim's
+built-in `:make` command.
+
+#### Optional: Remapping :make to use the panel
+
+The `:Make` command (capital M) is intentionally separate from Neovim's built-in
+`:make` to avoid breaking existing workflows. However, if you want `:make` to
+use the output panel instead of the quickfix list, you can remap it:
+
+```vim
+" Safer command-line abbreviation: typing :make expands to :Make, but only for the standalone command
+cnoreabbrev <expr> make getcmdtype() == ':' && getcmdline() == 'make' ? 'Make' : 'make'
+```
+
+**Note:** This conditional abbreviation ensures only the standalone `:make` command is remapped.  
+The simpler `cnoreabbrev make Make` can cause unexpected behavior if `make` appears in other commands (e.g., `:!make`).
+
+This way you keep your muscle memory but opt into the panel-based workflow.
+
 ### API helpers
 
 ```lua
 local panel = require("output-panel")
-panel.show()          -- open panel for the current target
-panel.hide()          -- hide panel
-panel.toggle()        -- toggle visibility
-panel.toggle_follow() -- toggle follow/tail mode
-panel.toggle_focus()  -- swap between mini/focus layouts
-panel.run({...})      -- run arbitrary commands (see above)
+panel.show()                    -- open panel for the current target
+panel.hide()                    -- hide panel
+panel.toggle()                  -- toggle visibility
+panel.toggle_follow()           -- toggle follow/tail mode
+panel.toggle_focus()            -- swap between mini/focus layouts
+panel.run({...})                -- run arbitrary commands (see above)
+panel.make(args)                -- run :make with optional arguments
+panel.adapter_enabled("name")   -- check if an adapter/profile is enabled
 ```
 
 ## Configuration
@@ -238,6 +314,19 @@ require("output-panel").setup({
   open_on_error = true,
   notifier = nil,
   profiles = {
+    vimtex = {
+      enabled = true,
+      notifications = { title = "VimTeX" },
+    },
+    overseer = {
+      enabled = true,
+      notifications = { title = "Overseer" },
+    },
+    make = {
+      enabled = true,
+      notifications = { title = "Make" },
+      auto_hide = { enabled = true },
+    },
     knit = {
       notifications = { title = "Knit" },
       auto_hide = { enabled = false },
@@ -274,6 +363,29 @@ Profiles are arbitrary tables merged into the active configuration whenever you
 call `run({ profile = "name" })`. Use them to change the notification title,
 auto-hide behaviour, or window layout for a specific workflow without touching
 other commands.
+
+All profiles (including the built-in adapters `vimtex` and `overseer`, plus the
+`make` helper) support an `enabled` field that allows you to temporarily disable
+an adapter, helper, or profile without removing its configuration:
+
+```lua
+require("output-panel").setup({
+  profiles = {
+    vimtex = {
+      enabled = false,  -- Disable VimTeX adapter
+    },
+    make = {
+      enabled = true,   -- Keep Make helper enabled (default)
+      notifications = { title = "Build" },
+    },
+    my_custom_profile = {
+      enabled = false,  -- Disable custom profile temporarily
+      notifications = { title = "Custom Task" },
+      auto_hide = { enabled = false },
+    },
+  },
+})
+```
 
 You can also bypass profiles and pass `config = { ... }` directly to `run()` for
 one-off overrides.
@@ -372,9 +484,14 @@ pane.
 
 #### Streaming Overseer tasks into the panel
 
-The plugin ships an Overseer component called `output_panel`. Include it in your
-task components to stream output into the same floating buffer used by
-`:OutputPanelToggle`/`:OutputPanelShow`:
+The Overseer adapter is **opt-in** and works differently from VimTeX and the Make
+helper. Instead of automatic event hooks or command wrappers, you explicitly add
+the `output_panel` component to tasks you want to stream.
+
+**Default Overseer behavior**: Tasks run normally without the output panel.
+
+**To use the output panel**: Include the `output_panel` component in your task
+components:
 
 ```lua
 require("overseer").setup({
@@ -386,6 +503,12 @@ require("overseer").setup({
 
 You can also attach it to individual tasks via `components = { "default",
 { "output_panel", focus = false } }` when calling `overseer.run_template()`.
+
+**Control**: Use `profiles.overseer.enabled = false` to disable the component
+globally, even if added to tasks.
+
+This opt-in design preserves Overseer's default workflow while making it easy to
+route specific tasks to the output panel when desired.
 
 ### ToggleTerm and generic terminals
 

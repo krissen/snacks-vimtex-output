@@ -2,10 +2,11 @@
 
 A configurable floating output window for Neovim jobs. The plugin focuses on
 keeping a single pane of live output available no matter how the work was
-started—ad-hoc shell commands, VimTeX builds, or Overseer tasks all feed into
-the same scratch buffer and share the same notification pipeline. VimTeX and
-Overseer act as **adapters**: they are fully optional, and when present the
-panel automatically tracks their logs alongside any command you run manually.
+started—ad-hoc shell commands, VimTeX builds, Neovim's built-in `:make`, or
+Overseer tasks all feed into the same scratch buffer and share the same
+notification pipeline. VimTeX and Overseer act as **adapters**: they are fully
+optional, and when present the panel automatically tracks their logs alongside
+any command you run manually.
 
 ## Requirements
 
@@ -38,8 +39,7 @@ panel automatically tracks their logs alongside any command you run manually.
 ## Adapters
 
 The core plugin never requires VimTeX or Overseer; it shows whatever you stream
-into it. Three adapters ship in-tree to make that effortless when those plugins
-are present:
+into it. Two plugin adapters and one built-in helper ship in-tree:
 
 - **VimTeX adapter** – Automatically hooks into VimTeX compile events when VimTeX
   is loaded. Non-invasive: VimTeX commands continue to work normally, the panel
@@ -47,12 +47,12 @@ are present:
 - **Overseer adapter** – Opt-in component (`output_panel`) that you add to tasks
   you want to stream. Overseer works normally by default; you choose which tasks
   use the panel.
-- **Make adapter** – Provides a separate `:Make` command (capital M) that runs
-  `makeprg` and shows output in the panel. Neovim's `:make` remains unchanged;
-  use `:Make` when you want panel output.
+- **Make helper** – Provides a `:Make` command (capital M) that wraps Neovim's
+  built-in `makeprg` and streams output to the panel. The native `:make` command
+  remains unchanged; use `:Make` when you want panel output.
 
-All adapters can be disabled via `profiles.{adapter}.enabled = false` without
-removing their configuration. The panel also works standalone for running
+All adapters and helpers can be disabled via `profiles.{name}.enabled = false`
+without removing their configuration. The panel also works standalone for running
 arbitrary commands without any adapter.
 
 ## Installation
@@ -186,11 +186,11 @@ an additional UI layer on top of VimTeX's compilation process.
 The integration is non-invasive and can be toggled via the profile configuration
 without affecting VimTeX's core functionality.
 
-### Make adapter
+### Make helper
 
-The plugin provides a `:Make` command that runs Neovim's `makeprg` and streams
-the output into the panel instead of the quickfix list. This keeps you in your
-current buffer while showing build output in the floating overlay.
+The plugin provides a `:Make` command that wraps Neovim's built-in `makeprg` and
+streams the output into the panel instead of the quickfix list. This keeps you in
+your current buffer while showing build output in the floating overlay.
 
 ```vim
 :Make          " Run makeprg and show output in panel
@@ -205,7 +205,7 @@ panel.make()           -- Run makeprg
 panel.make("clean")    -- Run with arguments
 ```
 
-The Make adapter uses the "make" profile by default, which you can customize in
+The Make helper uses the "make" profile by default, which you can customize in
 your configuration:
 
 ```lua
@@ -220,7 +220,7 @@ require("output-panel").setup({
 })
 ```
 
-The adapter respects your buffer's `makeprg` setting and runs in the buffer's
+The helper respects your buffer's `makeprg` setting and runs in the buffer's
 directory. It supports the `$*` placeholder for arguments just like Neovim's
 built-in `:make` command.
 
@@ -361,9 +361,9 @@ call `run({ profile = "name" })`. Use them to change the notification title,
 auto-hide behaviour, or window layout for a specific workflow without touching
 other commands.
 
-All profiles (including built-in adapters like `vimtex`, `overseer`, and `make`)
-support an `enabled` field that allows you to temporarily disable an adapter or
-profile without removing its configuration:
+All profiles (including the built-in adapters `vimtex` and `overseer`, plus the
+`make` helper) support an `enabled` field that allows you to temporarily disable
+an adapter, helper, or profile without removing its configuration:
 
 ```lua
 require("output-panel").setup({
@@ -372,7 +372,7 @@ require("output-panel").setup({
       enabled = false,  -- Disable VimTeX adapter
     },
     make = {
-      enabled = true,   -- Keep Make adapter enabled (default)
+      enabled = true,   -- Keep Make helper enabled (default)
       notifications = { title = "Build" },
     },
     my_custom_profile = {
@@ -481,9 +481,9 @@ pane.
 
 #### Streaming Overseer tasks into the panel
 
-The Overseer adapter is **opt-in** and works differently from VimTeX and Make.
-Instead of automatic event hooks or command replacements, you explicitly add the
-`output_panel` component to tasks you want to stream.
+The Overseer adapter is **opt-in** and works differently from VimTeX and the Make
+helper. Instead of automatic event hooks or command wrappers, you explicitly add
+the `output_panel` component to tasks you want to stream.
 
 **Default Overseer behavior**: Tasks run normally without the output panel.
 

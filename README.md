@@ -559,6 +559,7 @@ needs.
 | `max_lines` | Maximum buffer lines before trimming old output |
 | `open_on_error` | Force panel open when commands fail (even if `open=false`) |
 | `notifier` | Custom notification backend (Snacks auto-detected by default) |
+| `window_title` | Title shown in the floating window border (defaults to `notifications.title`) |
 | `profiles` | Named configuration presets for different tools/workflows |
 
 ### Default Configuration
@@ -620,14 +621,17 @@ require("output-panel").setup({
     vimtex = {
       enabled = true,
       notifications = { title = "VimTeX" },
+      window_title = "VimTeX",
     },
     overseer = {
       enabled = true,
       notifications = { title = "Overseer" },
+      window_title = "Overseer",
     },
     make = {
       enabled = true,
       notifications = { title = "Make" },
+      window_title = "Make",
       auto_hide = { enabled = true },
     },
   },
@@ -659,13 +663,26 @@ while the job ran.
 ### Profiles
 
 Profiles are arbitrary tables merged into the active configuration whenever you
-call `run({ profile = "name" })`. Use them to change the notification title,
-auto-hide behaviour, or window layout for a specific workflow without touching
-other commands.
+call `run({ profile = "name" })` or when built-in adapters (VimTeX, Overseer, Make) trigger.
+Use them to change the window title, notification settings, auto-hide behaviour,
+or window layout for a specific workflow without touching other commands.
 
 All profiles (including the built-in adapters `vimtex` and `overseer`, plus the
 `make` helper) support an `enabled` field that allows you to temporarily disable
-an adapter, helper, or profile without removing its configuration:
+an adapter, helper, or profile without removing its configuration.
+
+**Window Title Configuration:**
+
+The floating window title (shown in the border) is determined by the following precedence:
+1. Explicit `window_title` parameter passed to `run()` or `stream()`
+2. Profile's `window_title` setting (e.g., `profiles.vimtex.window_title = "VimTeX"`)
+3. Profile's `notifications.title` (for backwards compatibility)
+4. Global `window_title` setting
+5. Global `notifications.title` (defaults to "Output")
+
+This allows each adapter to show its own title (e.g., "VimTeX · Building · 1.2s"
+for LaTeX builds, "Make · Done · 0.5s" for make commands) while letting users
+override titles per profile or per command.
 
 ```lua
 require("output-panel").setup({
@@ -676,10 +693,12 @@ require("output-panel").setup({
     make = {
       enabled = true,   -- Keep Make helper enabled (default)
       notifications = { title = "Build" },
+      window_title = "Build",  -- Title shown in float border
     },
     my_custom_profile = {
       enabled = false,  -- Disable custom profile temporarily
       notifications = { title = "Custom Task" },
+      window_title = "My Tool",  -- Custom window title
       auto_hide = { enabled = false },
     },
   },

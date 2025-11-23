@@ -75,14 +75,17 @@ local default_config = {
     vimtex = {
       enabled = true,
       notifications = { title = "VimTeX" },
+      window_title = "VimTeX",
     },
     overseer = {
       enabled = true,
       notifications = { title = "Overseer" },
+      window_title = "Overseer",
     },
     make = {
       enabled = true,
       notifications = { title = "Make" },
+      window_title = "Make",
       auto_hide = { enabled = true },
     },
   },
@@ -541,8 +544,14 @@ local function status_title()
     base = state.job.window_title
   else
     local cfg = current_config()
-    local notifications = cfg.notifications or {}
-    base = notifications.title or "Output"
+    -- Prefer window_title from the active config/profile if set
+    if cfg.window_title then
+      base = cfg.window_title
+    else
+      -- Fall back to notifications.title for backwards compatibility
+      local notifications = cfg.notifications or {}
+      base = notifications.title or "Output"
+    end
   end
   if label and elapsed then
     return string.format("%s · %s · %.1fs", base, label, elapsed)
@@ -1689,6 +1698,13 @@ local function on_compile_started(event)
     return
   end
   state.job = nil
+
+  -- Apply vimtex profile so window_title and other settings are properly configured
+  local base_profiles = config.profiles or {}
+  if base_profiles.vimtex then
+    set_active_config(vim.deepcopy(base_profiles.vimtex))
+  end
+
   local cfg = current_config()
   local ctx = event_context(event)
   local failure_scope = vimtex_failure_scope(ctx.target)
@@ -1750,6 +1766,8 @@ local function on_compile_succeeded(event)
   -- Replace previous failure notification if one exists
   clear_failure_notification(failure_scope)
   notify("info", "LaTeX build finished" .. format_duration_suffix())
+  -- Reset active config after successful build completes
+  set_active_config(nil)
 end
 
 -- Handle VimTeX adapter compilation failure event (VimtexEventCompileFailed).
@@ -1787,6 +1805,8 @@ local function on_compile_failed(event)
     failure_entry.scope = failure_scope
     state.failure_notifications[failure_scope] = failure_entry
   end
+  -- Reset active config after failed build completes
+  set_active_config(nil)
 end
 
 local function on_compile_stopped()
@@ -1804,6 +1824,8 @@ local function on_compile_stopped()
   else
     refresh_window_title()
   end
+  -- Reset active config when compilation stops
+  set_active_config(nil)
 end
 
 local function setup_autocmds()

@@ -163,7 +163,7 @@ require("output-panel").setup({
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `cmd` | `string\|table\|function` | **Required.** Command to execute. Strings run in shell (`sh -c`), tables as argv, functions return either. |
+| `cmd` | `string|table|function` | **Required.** Command to execute. Strings run in shell (`sh -c`), tables as argv, functions return either. |
 | `title` | `string` | Notification title (defaults to command) |
 | `window_title` | `string` | Panel window title (defaults to `title`) |
 | `profile` | `string` | Apply a named profile from setup (e.g., `"rmarkdown"`) |

@@ -1,10 +1,11 @@
 # Contributor Guidance
 
 ## Purpose
-- This repository ships the `output-panel.nvim` module described in [README.md](README.md). Keep every change aligned with the stated goal: provide a commented, well-documented Neovim helper that renders VimTeX compiler output and arbitrary shell logs inside lightweight floating windows. Snacks support stays optional—a pleasant notifier treat, but never the defining UI layer.
+- This repository ships the `output-panel.nvim` module described in [README.md](README.md). Keep every change aligned with the stated goal: provide a **generic command runner** with live output streaming, complemented by optional adapters for VimTeX and Overseer. The core `run()` API works standalone without any adapters. Snacks support stays optional—a pleasant notifier treat, but never the defining UI layer.
 
 ## Coding Standards
-- Write idiomatic Lua that follows general Neovim and VimTeX best practices, with Snacks integration remaining purely optional.
+- Write idiomatic Lua that follows general Neovim best practices.
+- All dependencies (VimTeX, Overseer, Snacks) are optional—code must gracefully handle their absence.
 - Favor DRY solutions; extract helpers whenever logic is reused.
 - Every code block you touch **must be commented** in English to explain intent.
 - Never wrap imports in `pcall`-based try/catch purely for style reasons—only when guarding optional dependencies.
@@ -21,10 +22,16 @@
 
 ## Architecture & Key Concepts
 
+### Core Design: Generic API + Optional Adapters
+- **Generic command runner** (`run()`, `stream()`): Core functionality that works standalone without any adapters
+- **Optional adapters**: VimTeX and Overseer are optional integrations that hook into the shared output system
+- **Make helper**: Built-in `:Make` command that wraps `makeprg` through the panel
+- **Profile system**: Named configuration presets allow per-workflow customization
+
 ### State Management
-- The plugin maintains a single global `state` table tracking window, buffer, compilation status, timers, and notification references.
+- The plugin maintains a single global `state` table tracking window, buffer, job status, timers, and notification references.
 - State transitions follow: `idle` → `running` → `success`/`failure` → `idle`
-- Never modify state directly without considering concurrent operations (timers, autocmds).
+- Never modify state directly without considering concurrent operations (timers, autocmds, job execution).
 
 ### Window Modes
 - **Mini mode**: Compact, unfocused overlay for quick status checks (default when showing)
@@ -33,12 +40,14 @@
 
 ### Polling & Live Updates
 - A timer-based polling loop updates the buffer from the log file while the window is visible.
-- The timer stops automatically when the window closes or compilation finishes.
-- Retry logic handles race conditions when VimTeX recreates log files during compilation.
+- The timer stops automatically when the window closes or job finishes.
+- Retry logic handles race conditions when log files are recreated during execution.
 
-### Event Handling
-- VimTeX events (`VimtexEventCompiling`, `VimtexEventCompileSuccess`, etc.) drive state transitions.
-- Multiple event handlers may fire in quick succession; use token-based cancellation for deferred operations.
+### Event Handling & Adapters
+- **VimTeX adapter** (optional): Hooks into VimTeX events (`VimtexEventCompiling`, `VimtexEventCompileSuccess`, etc.) when VimTeX is loaded
+- **Overseer adapter** (optional): Provides `output_panel` component for tasks to opt into streaming
+- Adapter-specific logic stays separate from core command execution
+- All adapters respect the `enabled` flag in their respective profiles
 
 ## Common Tasks
 
@@ -58,14 +67,25 @@
 1. Notifications go through the `notify()` helper, which checks `config.notifications.enabled`
 2. The `notifier()` function handles snacks.nvim detection and fallback to `vim.notify`
 3. Failure notifications use `persist_failure` to optionally stay visible
-4. Update README if changing default notification behavior
+4. Notifications are scoped per job/adapter to avoid conflicts
+5. Update README if changing default notification behavior
+
+### Adding or modifying adapters
+1. Adapters should be non-invasive and work alongside the generic command runner
+2. Use the `stream()` API to integrate external tools
+3. Respect the `enabled` flag in the adapter's profile
+4. Keep adapter-specific logic separate from core command execution
+5. Document integration in the README's "Writing Custom Adapters" section
 
 ## Testing Guidelines
-- Manually test with various VimTeX configurations (different compilers, output paths)
+- Test the generic `run()` API with various shell commands
+- Test with and without optional dependencies (VimTeX, Overseer, snacks.nvim)
+- Manually test with various configurations (different compilers, output paths) when testing VimTeX adapter
 - Test both auto-open enabled and disabled scenarios
-- Verify behavior with snacks.nvim present and absent
 - Test window resizing and Neovim reloads
 - Check error handling when log files are missing or inaccessible
+- Verify Make helper with different `makeprg` configurations
+- Test profile system with custom profiles and overrides
 
 ## Workflow
 

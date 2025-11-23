@@ -450,7 +450,7 @@ local function notifier()
     end
     return state.notify
   end
-  -- Fallback to the shared helper so snacks/vim.notify auto-detection stays in sync with knit.run
+  -- Fallback to the shared helper for consistent snacks/vim.notify auto-detection
   state.notify = util.resolve_notifier()
   return state.notify
 end

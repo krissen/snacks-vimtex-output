@@ -73,9 +73,9 @@ All adapters and helpers can be disabled via `profiles.{name}.enabled = false` w
 }
 ```
 
-> Existing configs that still `require("snacks-vimtex-output")` continue to
-> work via a compatibility shim, but new setups should switch to
-> `require("output-panel")`.
+> **Migration notes:**
+> - Existing configs that still `require("snacks-vimtex-output")` continue to work via a compatibility shim, but new setups should switch to `require("output-panel")`.
+> - The `knit.run` helper module has been removed. Use `output-panel.run()` directly instead. The `knit` profile is no longer included in defaults but you can keep it in your config if needed.
 
 ## Quick Start
 
@@ -120,7 +120,6 @@ local panel = require("output-panel")
 vim.keymap.set("n", "<leader>rk", function()
   panel.run({
     cmd = { "Rscript", "-e", "rmarkdown::render('" .. vim.fn.expand("%") .. "')" },
-    profile = "rmarkdown", -- optional profile defined in setup()
     title = "R Markdown",
     success = "Document rendered",
     error = "Rendering failed",
@@ -137,6 +136,27 @@ vim.keymap.set("n", "<leader>py", function()
     error = "Script failed",
   })
 end, { desc = "Run Python script" })
+
+-- Example using a profile (profile must be defined in setup())
+vim.keymap.set("n", "<leader>rb", function()
+  panel.run({
+    cmd = "cargo build",
+    profile = "rust",  -- Uses settings from profiles.rust in setup()
+  })
+end, { desc = "Build Rust project" })
+```
+
+Define the profile in your setup:
+
+```lua
+require("output-panel").setup({
+  profiles = {
+    rust = {
+      notifications = { title = "Rust Build" },
+      auto_hide = { enabled = false },  -- Keep panel visible after builds
+    },
+  },
+})
 ```
 
 #### run() options

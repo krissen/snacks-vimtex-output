@@ -104,7 +104,7 @@ vim.keymap.set("n", "<leader>b", function()
 end, { desc = "Build project" })
 ```
 
-That's it! The panel handles notifications, streaming output, and visual feedback automatically. See below for advanced features like profiles, custom adapters, and configuration.
+That's it! The panel handles notifications, streaming output, and visual feedback automatically. See below for more features like profiles, custom adapters, and configuration.
 
 ## Usage
 
@@ -372,7 +372,7 @@ This is the same API used internally by the Overseer adapter. See the "Writing C
 
 ## Writing Custom Adapters
 
-The plugin's adapter system is designed to be extensible. You can write adapters for any tool that generates output: LSP build servers, Neotest runners, custom build systems, formatters, linters, etc.
+You can write adapters for other tools that generate output: LSP build servers, Neotest runners, custom build systems, formatters, linters, etc.
 
 ### Adapter Patterns
 
@@ -529,7 +529,7 @@ If you write an adapter for a popular tool, consider:
 - Documenting the required setup in your adapter's README
 - Using the same patterns as the built-in adapters for consistency
 
-The core plugin intentionally ships only VimTeX, Overseer, and Make support. This keeps the codebase focused while allowing the ecosystem to grow organically.
+The core plugin ships only VimTeX, Overseer, and Make support to keep the codebase focused.
 
 ## Configuration
 

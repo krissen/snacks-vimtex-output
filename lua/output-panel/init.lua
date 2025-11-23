@@ -1861,7 +1861,7 @@ local function execute_make(args)
     return
   end
 
-  -- Retrieve makeprg from the current buffer's options (defaults to "make" in Neovim)
+  -- Retrieve makeprg from the current buffer's options, defaulting to "make" if not set
   local makeprg = vim.api.nvim_get_option_value("makeprg", { buf = 0 })
   if not makeprg or makeprg == "" then
     makeprg = "make"

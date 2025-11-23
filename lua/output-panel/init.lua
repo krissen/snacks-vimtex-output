@@ -591,6 +591,19 @@ local function close_window(opts)
   stop_polling()
   clear_scrolloff_guard()
   clear_mini_anchor_guard()
+
+  -- For auto-hide, preserve the current window before closing the float.
+  -- When nvim_win_close is called, Neovim automatically switches focus to another window,
+  -- which can cause unwanted focus changes. By capturing the current window first and
+  -- restoring it after closing, we ensure auto-hide is completely non-invasive.
+  local preserved_win = nil
+  if opts.reason == "auto_success" then
+    local current = vim.api.nvim_get_current_win()
+    if current ~= state.win then
+      preserved_win = current
+    end
+  end
+
   if state.win and vim.api.nvim_win_is_valid(state.win) then
     vim.api.nvim_win_close(state.win, true)
   end
@@ -602,7 +615,17 @@ local function close_window(opts)
     vim.o.scrolloff = state.scrolloff_restore
     state.scrolloff_restore = nil
   end
-  restore_previous_window()
+
+  -- Restore focus based on close reason:
+  -- - auto_success: restore the window that was active before the close operation (uses pcall for safety)
+  -- - other reasons: restore the window that was active before entering focus mode (restore_previous_window has pcall internally)
+  if opts.reason == "auto_success" then
+    if preserved_win and vim.api.nvim_win_is_valid(preserved_win) then
+      pcall(vim.api.nvim_set_current_win, preserved_win)
+    end
+  else
+    restore_previous_window()
+  end
 end
 
 local function schedule_hide(delay)

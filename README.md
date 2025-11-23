@@ -41,17 +41,19 @@ The core plugin never requires VimTeX or Overseer; it shows whatever you stream
 into it. Three adapters ship in-tree to make that effortless when those plugins
 are present:
 
-- **VimTeX adapter** – Listens for compile events, tails the compiler output,
-  and reuses the same panel commands used for ad-hoc runs.
-- **Overseer adapter** – An Overseer component (`output_panel`) that mirrors task
-  output into the panel and reuses your configured profiles/notifications.
-- **Make adapter** – Provides a `:Make` command that runs Neovim's `makeprg` and
-  streams output into the panel instead of the quickfix list.
+- **VimTeX adapter** – Automatically hooks into VimTeX compile events when VimTeX
+  is loaded. Non-invasive: VimTeX commands continue to work normally, the panel
+  just displays the output.
+- **Overseer adapter** – Opt-in component (`output_panel`) that you add to tasks
+  you want to stream. Overseer works normally by default; you choose which tasks
+  use the panel.
+- **Make adapter** – Provides a separate `:Make` command (capital M) that runs
+  `makeprg` and shows output in the panel. Neovim's `:make` remains unchanged;
+  use `:Make` when you want panel output.
 
-The VimTeX and Overseer adapters activate automatically if their host plugin
-loads. The Make adapter is always available and can be used with any project
-that has a `makeprg` configured. If VimTeX and Overseer aren't installed, the
-panel still works as a standalone command runner.
+All adapters can be disabled via `profiles.{adapter}.enabled = false` without
+removing their configuration. The panel also works standalone for running
+arbitrary commands without any adapter.
 
 ## Installation
 
@@ -169,6 +171,20 @@ compilation, optional auto-hide on success, green/red borders, and persistent
 error notifications. Switching buffers retargets the window to whatever log is
 active (VimTeX project, Overseer task, or manual command). Buffers without an
 associated job leave the current output in place, avoiding unnecessary flicker.
+
+#### How the VimTeX adapter works
+
+The VimTeX adapter automatically hooks into VimTeX compilation events when VimTeX
+is installed. It **does not replace** VimTeX's built-in commands or functionality
+— VimTeX continues to work normally. The adapter simply adds the output panel as
+an additional UI layer on top of VimTeX's compilation process.
+
+- **VimTeX commands**: Continue to work as normal (`:VimtexCompile`, etc.)
+- **Output panel**: Automatically shows VimTeX compilation output
+- **Control**: Use `profiles.vimtex.enabled = false` to disable the adapter
+
+The integration is non-invasive and can be toggled via the profile configuration
+without affecting VimTeX's core functionality.
 
 ### Make adapter
 
@@ -466,9 +482,14 @@ pane.
 
 #### Streaming Overseer tasks into the panel
 
-The plugin ships an Overseer component called `output_panel`. Include it in your
-task components to stream output into the same floating buffer used by
-`:OutputPanelToggle`/`:OutputPanelShow`:
+The Overseer adapter is **opt-in** and works differently from VimTeX and Make.
+Instead of automatic event hooks or command replacements, you explicitly add the
+`output_panel` component to tasks you want to stream.
+
+**Default Overseer behavior**: Tasks run normally without the output panel.
+
+**To use the output panel**: Include the `output_panel` component in your task
+components:
 
 ```lua
 require("overseer").setup({
@@ -480,6 +501,12 @@ require("overseer").setup({
 
 You can also attach it to individual tasks via `components = { "default",
 { "output_panel", focus = false } }` when calling `overseer.run_template()`.
+
+**Control**: Use `profiles.overseer.enabled = false` to disable the component
+globally, even if added to tasks.
+
+This opt-in design preserves Overseer's default workflow while making it easy to
+route specific tasks to the output panel when desired.
 
 ### ToggleTerm and generic terminals
 

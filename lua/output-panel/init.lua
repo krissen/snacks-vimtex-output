@@ -602,7 +602,11 @@ local function close_window(opts)
     vim.o.scrolloff = state.scrolloff_restore
     state.scrolloff_restore = nil
   end
-  restore_previous_window()
+  -- Only restore focus when manually closing or switching modes.
+  -- Auto-hide should be completely unobtrusive and not change focus.
+  if opts.reason ~= "auto_success" then
+    restore_previous_window()
+  end
 end
 
 local function schedule_hide(delay)

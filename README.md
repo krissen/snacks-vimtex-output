@@ -209,6 +209,19 @@ The adapter respects your buffer's `makeprg` setting and runs in the buffer's
 directory. It supports the `$*` placeholder for arguments just like Neovim's
 built-in `:make` command.
 
+#### Optional: Remapping :make to use the panel
+
+The `:Make` command (capital M) is intentionally separate from Neovim's built-in
+`:make` to avoid breaking existing workflows. However, if you want `:make` to
+use the output panel instead of the quickfix list, you can remap it:
+
+```vim
+" Command-line abbreviation: typing :make expands to :Make
+cnoreabbrev make Make
+```
+
+This way you keep your muscle memory but opt into the panel-based workflow.
+
 ### API helpers
 
 ```lua

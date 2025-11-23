@@ -1,12 +1,15 @@
 # output-panel.nvim
 
-A configurable floating output window for Neovim jobs. The plugin focuses on
-keeping a single pane of live output available no matter how the work was
-started—ad-hoc shell commands, VimTeX builds, Neovim's built-in `:make`, or
-Overseer tasks all feed into the same scratch buffer and share the same
-notification pipeline. VimTeX and Overseer act as **adapters**: they are fully
-optional, and when present the panel automatically tracks their logs alongside
-any command you run manually.
+A configurable floating output window for Neovim jobs that combines **optional adapters** for VimTeX and Overseer with a **generic run() API** and **:Make helper** for everything else.
+
+The plugin focuses on keeping a single pane of live output available no matter how the work was started—ad-hoc shell commands, VimTeX builds, Neovim's built-in `:make`, or Overseer tasks all feed into the same scratch buffer and share the same notification pipeline.
+
+**Core features:**
+- **Generic `run()` API** – Execute any shell command with live output streaming
+- **VimTeX adapter** – Automatically displays LaTeX compilation output (optional)
+- **Overseer adapter** – Stream task output into the panel (optional, opt-in)
+- **:Make helper** – Run `makeprg` with panel output instead of quickfix
+- **Extensible** – Write your own adapters for LSP, Neotest, or any build system
 
 ## Requirements
 
@@ -21,39 +24,33 @@ any command you run manually.
 
 ## Highlights
 
-- **Output-first UI** – Everything funnels into a lightweight floating pane that
-  follows the latest job. Toggle mini/focus modes to watch logs without managing
-  extra splits or terminals.
-- **Adapters, not dependencies** – Built-in adapters understand VimTeX and
-  Overseer when installed, but the plugin also works standalone as a generic
-  command runner.
-- **Profiles & overrides** – Define reusable configuration profiles and apply
-  them per command so each workflow can tweak window geometry, notification
-  titles, auto-hide timing, etc.
-- **Notifier fallback chain** – Works out of the box with `vim.notify`, happily
-  upgrades to `snacks.notify` when available, and accepts any custom notifier you
-  want to plug in.
-- **Knit helper** – `require("knit.run")` is a zero-dependency runner that
-  hooks into the panel only when you opt-in to live output.
+- **Generic command runner** – `run()` executes any shell command with live output streaming, notifications, and configurable behavior. No adapters required.
+- **Output-first UI** – Everything funnels into a lightweight floating pane that follows the latest job. Toggle mini/focus modes to watch logs without managing extra splits or terminals.
+- **Optional adapters** – Built-in adapters understand VimTeX and Overseer when installed, but the plugin works standalone. Write your own adapters for other tools using the `stream()` API.
+- **Profiles & overrides** – Define reusable configuration profiles and apply them per command so each workflow can tweak window geometry, notification titles, auto-hide timing, etc.
+- **Notifier fallback chain** – Works out of the box with `vim.notify`, happily upgrades to `snacks.notify` when available, and accepts any custom notifier you want to plug in.
 
-## Adapters
+## Architecture: Generic API + Optional Adapters
 
-The core plugin never requires VimTeX or Overseer; it shows whatever you stream
-into it. Two plugin adapters and one built-in helper ship in-tree:
+The plugin is built around a **generic command runner** (`run()`) that works standalone. Adapters and helpers are optional integrations that hook specific tools into this shared output system:
 
-- **VimTeX adapter** – Automatically hooks into VimTeX compile events when VimTeX
-  is loaded. Non-invasive: VimTeX commands continue to work normally, the panel
-  just displays the output.
-- **Overseer adapter** – Opt-in component (`output_panel`) that you add to tasks
-  you want to stream. Overseer works normally by default; you choose which tasks
-  use the panel.
-- **Make helper** – Provides a `:Make` command (capital M) that wraps Neovim's
-  built-in `makeprg` and streams output to the panel. The native `:make` command
-  remains unchanged; use `:Make` when you want panel output.
+### Generic API
 
-All adapters and helpers can be disabled via `profiles.{name}.enabled = false`
-without removing their configuration. The panel also works standalone for running
-arbitrary commands without any adapter.
+- **`run({cmd, ...})`** – Execute any shell command with live output, notifications, and configurable window behavior. Works without any adapters installed.
+- **`stream({...})`** – Lower-level API for external tools to stream output into the panel. Used by adapters and available for custom integrations.
+
+### Built-in Adapters & Helpers
+
+- **VimTeX adapter** (optional, automatic)  
+  Hooks into VimTeX compile events when VimTeX is loaded. Non-invasive: VimTeX commands continue to work normally, the panel just displays the output.
+
+- **Overseer adapter** (optional, opt-in)  
+  Component (`output_panel`) that you add to tasks you want to stream. Overseer works normally by default; you choose which tasks use the panel.
+
+- **:Make helper** (built-in)  
+  Provides a `:Make` command that wraps Neovim's built-in `makeprg` and streams output to the panel. The native `:make` command remains unchanged; use `:Make` when you want panel output.
+
+All adapters and helpers can be disabled via `profiles.{name}.enabled = false` without removing their configuration. The panel works standalone for running arbitrary commands without any adapter.
 
 ## Installation
 
@@ -76,9 +73,38 @@ arbitrary commands without any adapter.
 }
 ```
 
-> Existing configs that still `require("snacks-vimtex-output")` continue to
-> work via a compatibility shim, but new setups should switch to
-> `require("output-panel")`.
+> **Migration notes:**
+> - Existing configs that still `require("snacks-vimtex-output")` continue to work via a compatibility shim, but new setups should switch to `require("output-panel")`.
+> - The `knit.run` helper module has been removed. Use `output-panel.run()` directly instead. The `knit` profile is no longer included in defaults but you can keep it in your config if needed.
+
+## Quick Start
+
+The plugin works immediately after installation with zero configuration. Here are the most common ways to use it:
+
+**Run any command with live output:**
+
+```lua
+:lua require("output-panel").run({ cmd = "npm run build" })
+```
+
+**Use :Make for build commands:**
+
+```vim
+:Make        " Run your makeprg and see output in the panel
+:Make test   " Pass arguments to makeprg
+```
+
+**If you have VimTeX installed**, LaTeX compilation output automatically appears in the panel. Use `:OutputPanelToggle` to show/hide it, or `:OutputPanelToggleFocus` to switch between mini and focus modes.
+
+**For custom workflows**, bind keys to `run()`:
+
+```lua
+vim.keymap.set("n", "<leader>b", function()
+  require("output-panel").run({ cmd = "cargo build" })
+end, { desc = "Build project" })
+```
+
+That's it! The panel handles notifications, streaming output, and visual feedback automatically. See below for more features like profiles, custom adapters, and configuration.
 
 ## Usage
 
@@ -90,17 +116,67 @@ panel, and notifications summarise the exit status.
 ```lua
 local panel = require("output-panel")
 
--- Knit the current RMarkdown file using Rscript
+-- Render an R Markdown document
 vim.keymap.set("n", "<leader>rk", function()
   panel.run({
-    cmd = { "Rscript", "bifrost__knit.R", "-r", vim.fn.expand("%") },
-    profile = "knit", -- optional profile defined in setup()
-    success = "Document knitted",
-    error = "Knitting failed",
-    start = "Knitting…",
+    cmd = { "Rscript", "-e", "rmarkdown::render('" .. vim.fn.expand("%") .. "')" },
+    title = "R Markdown",
+    success = "Document rendered",
+    error = "Rendering failed",
+    start = "Rendering…",
   })
-end, { desc = "Knit document" })
+end, { desc = "Render R Markdown document" })
+
+-- Run a Python script with live output
+vim.keymap.set("n", "<leader>py", function()
+  panel.run({
+    cmd = { "python", vim.fn.expand("%") },
+    title = "Python",
+    success = "Script finished",
+    error = "Script failed",
+  })
+end, { desc = "Run Python script" })
+
+-- Example using a profile (profile must be defined in setup())
+vim.keymap.set("n", "<leader>rb", function()
+  panel.run({
+    cmd = "cargo build",
+    profile = "rust",  -- Uses settings from profiles.rust in setup()
+  })
+end, { desc = "Build Rust project" })
 ```
+
+Define the profile in your setup:
+
+```lua
+require("output-panel").setup({
+  profiles = {
+    rust = {
+      notifications = { title = "Rust Build" },
+      auto_hide = { enabled = false },  -- Keep panel visible after builds
+    },
+  },
+})
+```
+
+#### run() options
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `cmd` | `string|table|function` | **Required.** Command to execute. Strings run in shell (`sh -c`), tables as argv, functions return either. |
+| `title` | `string` | Notification title (defaults to command) |
+| `window_title` | `string` | Panel window title (defaults to `title`) |
+| `profile` | `string` | Apply a named profile from setup (e.g., `"rmarkdown"`) |
+| `config` | `table` | Inline configuration overrides |
+| `success` | `string` | Success notification message |
+| `error` | `string` | Error notification message |
+| `start` | `string` | Start notification message |
+| `notify_start` | `boolean` | Show start notification (default: `true`) |
+| `open` | `boolean` | Show panel immediately (default: `true`) |
+| `focus` | `boolean` | Open in focus mode vs mini mode (default: `false`) |
+| `cwd` | `string` | Working directory for the command |
+| `env` | `table` | Environment variables |
+| `on_exit` | `function` | Callback when command completes: `function(result)` |
 
 Key behaviours:
 
@@ -114,36 +190,6 @@ Key behaviours:
   letting a specific workflow stay quiet without affecting others.
 - Each run gets its own temporary log file, so you can revisit the output even
   after the command completes.
-
-### Knit helper
-
-`lua/knit/run.lua` ships a lightweight wrapper for RMarkdown/Quarto workflows.
-It mirrors the `run()` API but defaults to plain notifications unless you set
-`output_panel`/`live_output = true`, in which case it proxies to the panel.
-
-```lua
-local knit_run = require("knit.run")
-
-vim.keymap.set("n", "<leader>rk", function()
-  knit_run.run({
-    cmd = { "Rscript", "bifrost__knit.R", "-r", vim.fn.expand("%") },
-    title = "Knit document",
-    success = "Document knitted",
-    error = "Knitting failed",
-    output_panel = true, -- live stream via output-panel.nvim
-    panel = {
-      profile = "knit",
-      focus = false,
-    },
-  })
-end, { desc = "Knit document" })
-```
-
-Without `output_panel` it simply routes notifications through the usual fallback
-chain (Snacks first if installed, otherwise `vim.notify`) while still respecting
-the provided titles/timeouts. Use the `panel` table to
-adjust the window when live streaming (e.g. set a dedicated profile, tweak
-layout, or disable `notify_start`).
 
 ### VimTeX adapter
 
@@ -240,6 +286,34 @@ The simpler `cnoreabbrev make Make` can cause unexpected behavior if `make` appe
 
 This way you keep your muscle memory but opt into the panel-based workflow.
 
+### Overseer adapter
+
+The Overseer adapter is **opt-in** and works differently from VimTeX and the Make
+helper. Instead of automatic event hooks or command wrappers, you explicitly add
+the `output_panel` component to tasks you want to stream.
+
+**Default Overseer behavior**: Tasks run normally without the output panel.
+
+**To use the output panel**: Include the `output_panel` component in your task
+components:
+
+```lua
+require("overseer").setup({
+  component_aliases = {
+    default = { "default", { "output_panel", open = true } },
+  },
+})
+```
+
+You can also attach it to individual tasks via `components = { "default",
+{ "output_panel", focus = false } }` when calling `overseer.run_template()`.
+
+**Control**: Use `profiles.overseer.enabled = false` to disable the component
+globally, even if added to tasks.
+
+This opt-in design preserves Overseer's default workflow while making it easy to
+route specific tasks to the output panel when desired.
+
 ### API helpers
 
 ```lua
@@ -250,15 +324,236 @@ panel.toggle()                  -- toggle visibility
 panel.toggle_follow()           -- toggle follow/tail mode
 panel.toggle_focus()            -- swap between mini/focus layouts
 panel.run({...})                -- run arbitrary commands (see above)
+panel.stream({...})             -- create a streaming session for external tools
 panel.make(args)                -- run :make with optional arguments
 panel.adapter_enabled("name")   -- check if an adapter/profile is enabled
 ```
+
+#### stream() API
+
+The `stream()` function provides a lower-level interface for external tools, adapters, or custom integrations to feed output into the panel. It returns a session handle with methods for appending output and signaling completion.
+
+**Example: Custom adapter**
+
+```lua
+local panel = require("output-panel")
+
+-- Start a streaming session
+local session = panel.stream({
+  kind = "my_tool",              -- Identifier for this adapter/tool
+  title = "My Build",            -- Notification title
+  window_title = "Building...",  -- Window title
+  profile = "my_profile",        -- Optional profile for config overrides
+  config = {},                   -- Optional inline config overrides
+  notify_start = true,           -- Show "started" notification
+  start = "Build started...",    -- Custom start message
+  success = "Build finished",    -- Custom success message
+  error = "Build failed",        -- Custom error message
+  focus = false,                 -- Open in mini or focus mode
+  open = true,                   -- Show panel immediately
+})
+
+if session then
+  -- Append output as it arrives
+  session:append_stdout("Building project...\n")
+  session:append_stderr("Warning: deprecated API\n")
+  
+  -- Signal completion when done
+  session:finish({ code = 0 })  -- 0 for success, non-zero for error
+end
+```
+
+The session handle provides:
+- `session:append_stdout(data)` – Add stdout data to the output
+- `session:append_stderr(data)` – Add stderr data to the output  
+- `session:finish(result)` – Complete the session with exit code and trigger notifications
+
+This is the same API used internally by the Overseer adapter. See the "Writing Custom Adapters" section below for a complete example.
+
+## Writing Custom Adapters
+
+You can write adapters for other tools that generate output: LSP build servers, Neotest runners, custom build systems, formatters, linters, etc.
+
+### Adapter Patterns
+
+There are two main patterns for integrating external tools:
+
+#### Pattern 1: Simple wrapper using `run()`
+
+For tools where you control the command invocation, use `run()` directly:
+
+```lua
+-- Example: R Markdown rendering adapter
+vim.keymap.set("n", "<leader>rr", function()
+  local panel = require("output-panel")
+  panel.run({
+    cmd = { "Rscript", "-e", "rmarkdown::render('" .. vim.fn.expand("%") .. "')" },
+    profile = "rmarkdown",
+    title = "R Markdown",
+    success = "Document rendered",
+    error = "Rendering failed",
+  })
+end, { desc = "Render R Markdown document" })
+```
+
+#### Pattern 2: Event-driven adapter using `stream()`
+
+For tools that have their own lifecycle (build servers, test runners, task systems), use `stream()` to bridge events into the panel:
+
+```lua
+-- Example: LSP build server adapter
+local function setup_lsp_build_adapter()
+  local panel = require("output-panel")
+  local session = nil
+  
+  -- Hook into LSP progress notifications
+  vim.api.nvim_create_autocmd("LspProgress", {
+    callback = function(args)
+      local client = vim.lsp.get_client_by_id(args.data.client_id)
+      if not client or client.name ~= "rust_analyzer" then
+        return
+      end
+      
+      local value = args.data.params.value
+      
+      if value.kind == "begin" and value.title == "Building" then
+        -- Start new streaming session
+        session = panel.stream({
+          kind = "lsp_build",
+          title = "Rust Build",
+          window_title = "cargo build",
+          profile = "rust",
+          notify_start = true,
+          start = "Building Rust project...",
+          success = "Build successful",
+          error = "Build failed",
+        })
+      elseif session and value.kind == "report" then
+        -- Append progress messages
+        if value.message then
+          session:append_stdout(value.message .. "\n")
+        end
+      elseif session and value.kind == "end" then
+        -- Finish the session
+        local code = value.message and value.message:match("error") and 1 or 0
+        session:finish({ code = code })
+        session = nil
+      end
+    end,
+  })
+end
+```
+
+### Full Example: Overseer Component Adapter
+
+The built-in Overseer adapter demonstrates a complete integration. Here's how it works:
+
+```lua
+-- lua/overseer/component/my_adapter.lua
+local panel = require("output-panel")
+
+return {
+  desc = "Send task output to output-panel.nvim",
+  params = {
+    open = { type = "boolean", default = true },
+    focus = { type = "boolean", default = false },
+    profile = { type = "string", default = "overseer", optional = true },
+  },
+  constructor = function(params)
+    return {
+      stream = nil,
+      on_start = function(self, task)
+        -- Create streaming session when task starts
+        self.stream = panel.stream({
+          kind = "overseer",
+          title = task.name,
+          profile = params.profile,
+          focus = params.focus,
+          open = params.open,
+        })
+      end,
+      on_output = function(self, _, data, stream)
+        -- Forward output to panel
+        if not self.stream then return end
+        if stream == "stderr" then
+          self.stream:append_stderr(data)
+        else
+          self.stream:append_stdout(data)
+        end
+      end,
+      on_complete = function(self, _, status, result)
+        -- Finish session with exit code
+        if not self.stream then return end
+        local code = status == "SUCCESS" and 0 or 1
+        self.stream:finish({ code = code })
+        self.stream = nil
+      end,
+    }
+  end,
+}
+```
+
+### Adapter Best Practices
+
+1. **Use profiles** – Define a custom profile for your adapter so users can configure it independently:
+   ```lua
+   require("output-panel").setup({
+     profiles = {
+       my_tool = {
+         enabled = true,
+         notifications = { title = "My Tool" },
+         auto_hide = { enabled = false },
+       },
+     },
+   })
+   ```
+
+2. **Respect enabled flag** – Check if your adapter is enabled before starting:
+   ```lua
+   if not panel.adapter_enabled("my_tool") then
+     vim.notify("My Tool adapter is disabled", vim.log.levels.WARN)
+     return
+   end
+   ```
+
+3. **Handle session conflicts** – Only one command can stream at a time. `stream()` returns `nil` if another job is active.
+
+4. **Normalize output** – The panel expects strings for `append_stdout/stderr`. Convert tables to newline-separated text if needed.
+
+5. **Set meaningful titles** – Use different `title` (for notifications) and `window_title` (for the panel header) when appropriate.
+
+### Sharing Adapters
+
+If you write an adapter for a popular tool, consider:
+- Publishing it as a standalone plugin (e.g., `my-tool-output-panel.nvim`)
+- Documenting the required setup in your adapter's README
+- Using the same patterns as the built-in adapters for consistency
+
+The core plugin ships only VimTeX, Overseer, and Make support to keep the codebase focused.
 
 ## Configuration
 
 `setup()` merges your overrides with the defaults below. Profiles are deep
 merged, so you can inherit global values and tweak only what each workflow
 needs.
+
+### Configuration Overview
+
+| Section | Description |
+|---------|-------------|
+| `mini` | Window dimensions for compact mini mode (unfocused overlay) |
+| `focus` | Window dimensions for focus mode (interactive, larger window) |
+| `auto_open` | Automatically show panel when commands/builds start |
+| `auto_hide` | Automatically hide panel after successful builds |
+| `notifications` | Notification behavior (titles, persistence for errors) |
+| `follow` | Auto-scroll to bottom of output (tail mode) |
+| `poll` | How often to refresh output while panel is visible |
+| `max_lines` | Maximum buffer lines before trimming old output |
+| `open_on_error` | Force panel open when commands fail (even if `open=false`) |
+| `notifier` | Custom notification backend (Snacks auto-detected by default) |
+| `profiles` | Named configuration presets for different tools/workflows |
+
+### Default Configuration
 
 ```lua
 require("output-panel").setup({
@@ -326,10 +621,6 @@ require("output-panel").setup({
       enabled = true,
       notifications = { title = "Make" },
       auto_hide = { enabled = true },
-    },
-    knit = {
-      notifications = { title = "Knit" },
-      auto_hide = { enabled = false },
     },
   },
 })
@@ -482,33 +773,7 @@ but doing so typically requires authoring task definitions and tweaking layout
 settings—effort that outweighs the benefit when you only need a “fire-and-forget”
 pane.
 
-#### Streaming Overseer tasks into the panel
-
-The Overseer adapter is **opt-in** and works differently from VimTeX and the Make
-helper. Instead of automatic event hooks or command wrappers, you explicitly add
-the `output_panel` component to tasks you want to stream.
-
-**Default Overseer behavior**: Tasks run normally without the output panel.
-
-**To use the output panel**: Include the `output_panel` component in your task
-components:
-
-```lua
-require("overseer").setup({
-  component_aliases = {
-    default = { "default", { "output_panel", open = true } },
-  },
-})
-```
-
-You can also attach it to individual tasks via `components = { "default",
-{ "output_panel", focus = false } }` when calling `overseer.run_template()`.
-
-**Control**: Use `profiles.overseer.enabled = false` to disable the component
-globally, even if added to tasks.
-
-This opt-in design preserves Overseer's default workflow while making it easy to
-route specific tasks to the output panel when desired.
+See the "Overseer adapter" section in the Usage guide above for complete integration instructions.
 
 ### ToggleTerm and generic terminals
 

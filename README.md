@@ -10,7 +10,7 @@ A configurable floating output window for Neovim jobs that combines **optional a
 
 <br>
 
-The plugin focuses on keeping a single pane of live output available no matter how the work was started—ad-hoc shell commands, VimTeX builds, Neovim's built-in `:make`, or Overseer tasks all feed into the same scratch buffer and share the same notification pipeline.
+The plugin focuses on keeping a single pane of live output available no matter how the work was started: ad-hoc shell commands, VimTeX builds, Neovim's built-in `:make`, or Overseer tasks all feed into the same scratch buffer and share the same notification pipeline.
 
 **Core features:**
 - **Generic `run()` API** – Execute any shell command with live output streaming
@@ -81,9 +81,6 @@ All adapters and helpers can be disabled via `profiles.{name}.enabled = false` w
 }
 ```
 
-> **Migration notes:**
-> - Existing configs that still `require("snacks-vimtex-output")` continue to work via a compatibility shim, but new setups should switch to `require("output-panel")`.
-> - The `knit.run` helper module has been removed. Use `output-panel.run()` directly instead. The `knit` profile is no longer included in defaults but you can keep it in your config if needed.
 
 ## Quick Start
 
@@ -229,8 +226,8 @@ associated job leave the current output in place, avoiding unnecessary flicker.
 #### How the VimTeX adapter works
 
 The VimTeX adapter automatically hooks into VimTeX compilation events when VimTeX
-is installed. It **does not replace** VimTeX's built-in commands or functionality
-— VimTeX continues to work normally. The adapter simply adds the output panel as
+is installed. It **does not replace** VimTeX's built-in commands or functionality.
+VimTeX continues to work normally. The adapter simply adds the output panel as
 an additional UI layer on top of VimTeX's compilation process.
 
 - **VimTeX commands**: Continue to work as normal (`:VimtexCompile`, etc.)
@@ -605,7 +602,7 @@ require("output-panel").setup({
   },
   notifications = {
     enabled = true,
-    title = "VimTeX",
+    title = "Runner",
     persist_failure = 45,
   },
   follow = {
@@ -764,7 +761,7 @@ floating overlay and notification layer on top:
 | Visual status | Border colours + notifications | Messages only |
 | Buffer type | Scratch, hidden by default | Normal buffer |
 
-Use whichever suits your workflow—the panel adds a custom floating skin on top
+Use whichever suits your workflow: the panel adds a custom floating skin on top
 of VimTeX's reliable compilation backend while also powering any other command
 or task you want to monitor.
 

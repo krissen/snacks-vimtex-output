@@ -54,7 +54,7 @@ local default_config = {
   -- Notification configuration and override hook
   notifications = {
     enabled = true,
-    title = "VimTeX",
+    title = "Runner",
     -- Set to false to disable persistence, 0/-1 (or true) to keep failures
     -- until the next update, or a positive number of seconds (default 45)
     -- before the notification auto-dismisses.

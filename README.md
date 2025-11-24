@@ -212,6 +212,7 @@ with or without VimTeX; aliases remain for existing mappings:
 | `:OutputPanelToggle` | Toggle visibility. |
 | `:OutputPanelToggleFocus` | Switch between mini/focus layouts. |
 | `:OutputPanelToggleFollow` | Toggle follow/tail mode. |
+| `:OutputPanelOpenLog` | Open the raw log file in a buffer for debugging. |
 
 Legacy `:VimtexOutput*` commands remain as aliases so existing mappings keep
 working whether or not VimTeX is present.
@@ -744,7 +745,7 @@ This applies everywhere—VimTeX events and manual command runs.
 
 - **Nothing shows up when running a command** – Ensure you're on Neovim 0.8+
   and that the command exists in your `$PATH`. The panel writes every chunk to a
-  temp file which you can inspect with `:edit ` followed by the path from `:lua print(require("output-panel").get_log_path())`.
+  temp file; inspect it with `:OutputPanelOpenLog`.
 - **VimTeX overlay never opens** – Set `auto_open.enabled = true` or run one of
   the `:OutputPanel*` commands manually (legacy `:VimtexOutput*` aliases also
   work). Verify `vim.b.vimtex.compiler.output` is populated in your TeX buffer.

@@ -1970,8 +1970,9 @@ function M.make(args)
   execute_make(args or "")
 end
 
--- Get the current log file path for debugging purposes.
--- Returns nil if no output target is active.
+---Get the current log file path for debugging purposes.
+---Returns nil if no output target is active.
+---@return string|nil
 function M.get_log_path()
   return state.target
 end

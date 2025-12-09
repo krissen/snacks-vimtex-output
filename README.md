@@ -196,6 +196,21 @@ Key behaviours:
 - Each run gets its own temporary log file, so you can revisit the output even
   after the command completes.
 
+### Stop a running command
+
+Send a stop signal to the active job when you need to cancel a runaway build or
+script. The panel marks the run as **cancelled** and keeps the output visible so
+you can review partial logs.
+
+```lua
+vim.keymap.set("n", "<leader>xs", function()
+  require("output-panel").stop()
+end, { desc = "Stop running command" })
+```
+
+You can also run `:OutputPanelStop` to stop the current command without a
+mapping.
+
 ### VimTeX adapter
 
 When VimTeX is installed, `setup()` wires the panel to
@@ -209,6 +224,7 @@ with or without VimTeX; aliases remain for existing mappings:
 | `:OutputPanelToggle` | Toggle visibility. |
 | `:OutputPanelToggleFocus` | Switch between mini/focus layouts. |
 | `:OutputPanelToggleFollow` | Toggle follow/tail mode. |
+| `:OutputPanelStop` | Stop the currently running command and mark it as cancelled. |
 | `:OutputPanelOpenLog` | Open the raw log file in a buffer for debugging. |
 
 Legacy `:VimtexOutput*` commands remain as aliases so existing mappings keep

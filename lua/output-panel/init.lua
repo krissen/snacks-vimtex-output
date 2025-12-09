@@ -376,6 +376,42 @@ local function command_job_active()
   return state.job and state.job.active ~= false
 end
 
+-- Try to terminate the underlying job handle using whatever interface it exposes.
+-- Supports both vim.system Job objects and legacy jobstart() IDs, returning false
+-- when no handle is available (e.g. external stream integrations).
+local function terminate_job_handle(job)
+  if not job or not job.handle then
+    return false
+  end
+
+  local signal = (uv and uv.SIGTERM) or 15
+  if type(job.handle) == "table" or type(job.handle) == "userdata" then
+    if type(job.handle.kill) == "function" then
+      local ok = pcall(job.handle.kill, job.handle, signal)
+      if ok then
+        return true
+      end
+    end
+    if job.handle.pid and uv and uv.kill then
+      local ok = pcall(uv.kill, job.handle.pid, signal)
+      if ok then
+        return true
+      end
+    end
+    return false
+  end
+
+  if type(job.handle) == "number" then
+    local ok, result = pcall(vim.fn.jobstop, job.handle)
+    if not ok then
+      return false
+    end
+    return result ~= -1
+  end
+
+  return false
+end
+
 local function open_log_file(path)
   local target = path or (vim.fn.tempname() .. ".log")
   local ok, handle = pcall(io.open, target, "w+")
@@ -534,6 +570,7 @@ local status_labels = {
   running = "Building",
   success = "Done",
   failure = "Error",
+  cancelled = "Stopped",
 }
 
 local function status_title()
@@ -1371,6 +1408,7 @@ local function create_stream_session(opts)
     log_handle = handle,
     profile = opts.profile,
     source_buf = source_buf,
+    cancelled = false,
   }
   state.status = "running"
   state.started_at = current_time()
@@ -1426,13 +1464,27 @@ local function create_stream_session(opts)
     state.job.active = false
     state.running_notified = false
     stop_polling()
+    local cancelled = state.job and state.job.cancelled
     local cfg = current_config()
     local window_exists = state.win and vim.api.nvim_win_is_valid(state.win)
     local obj = result or {}
     obj.code = obj.code or 0
     obj.stdout = obj.stdout or table.concat(stdout_chunks)
     obj.stderr = obj.stderr or table.concat(stderr_chunks)
-    if obj.code == 0 then
+    if cancelled then
+      state.status = "cancelled"
+      state.border_hl = "DiagnosticWarn"
+      state.hide_token = state.hide_token + 1
+      if open_panel or window_exists or cfg.open_on_error ~= false then
+        render_window({
+          target = log_path,
+          focus = state.focused,
+          border_hl = state.border_hl,
+        })
+      end
+      clear_failure_notification(command_failure_scope(state.job))
+      notify("warn", job_title .. " cancelled" .. format_duration_suffix())
+    elseif obj.code == 0 then
       state.status = "success"
       state.border_hl = "DiagnosticOk"
       if open_panel or window_exists then
@@ -1474,6 +1526,9 @@ local function create_stream_session(opts)
     end
     set_active_config(nil)
   end
+
+  -- Capture the finisher so stop() can conclude a session if a handle dies without firing callbacks.
+  state.job.finish_stream = finish_stream
 
   return {
     log_path = log_path,
@@ -1531,6 +1586,42 @@ function M.toggle_focus()
     return
   end
   render_window({ focus = not state.focused })
+end
+
+-- Stop the active command/job if one is running. Supports vim.system handles,
+-- jobstart() job IDs, and stream sessions without handles by calling their
+-- finishers directly.
+---@return boolean stopped True when a stop signal was sent or the session was closed.
+function M.stop()
+  if not command_job_active() then
+    notify("info", "No running command to stop.")
+    return false
+  end
+
+  local job = state.job
+  if not job then
+    return false
+  end
+
+  job.cancelled = true
+  if job.log_handle then
+    append_log(job.log_handle, "\n[output-panel] Command cancelled by user\n")
+  end
+
+  local termination = terminate_job_handle(job)
+  if not termination and job.finish_stream then
+    job.finish_stream({ code = 1, signal = 0 })
+    notify("info", "command stopped")
+    return true
+  end
+
+  if termination then
+    notify("info", "stopping command…")
+    return true
+  end
+
+  notify("warn", "Unable to stop the running command; it may have already exited.")
+  return false
 end
 
 ---Check if a specific adapter or profile is enabled.
@@ -1985,6 +2076,7 @@ local function setup_commands()
     OutputPanelToggle = M.toggle,
     OutputPanelToggleFocus = M.toggle_focus,
     OutputPanelToggleFollow = M.toggle_follow,
+    OutputPanelStop = M.stop,
     VimtexOutputShow = M.show,
     VimtexOutputHide = M.hide,
     VimtexOutputToggle = M.toggle,

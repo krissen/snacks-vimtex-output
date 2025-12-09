@@ -377,11 +377,11 @@ local function command_job_active()
 end
 
 -- Try to terminate the underlying job handle using whatever interface it exposes.
--- Supports both vim.system Job objects and legacy jobstart() IDs, falling back to nil
+-- Supports both vim.system Job objects and legacy jobstart() IDs, returning false
 -- when no handle is available (e.g. external stream integrations).
 local function terminate_job_handle(job)
   if not job or not job.handle then
-    return nil
+    return false
   end
 
   local signal = (uv and uv.SIGTERM) or 15
@@ -1598,19 +1598,25 @@ function M.stop()
     return false
   end
 
-  local job = state.job or {}
+  local job = state.job
+  if not job then
+    return false
+  end
+
   job.cancelled = true
-  append_log(job.log_handle, "\n[output-panel] Command cancelled by user\n")
+  if job.log_handle then
+    append_log(job.log_handle, "\n[output-panel] Command cancelled by user\n")
+  end
 
   local termination = terminate_job_handle(job)
-  if termination == nil and job.finish_stream then
+  if not termination and job.finish_stream then
     job.finish_stream({ code = 1, signal = 0 })
-    notify("info", "Stopped current command.")
+    notify("info", "command stopped")
     return true
   end
 
   if termination then
-    notify("info", "Stopping current command…")
+    notify("info", "stopping command…")
     return true
   end
 
